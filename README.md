@@ -19,11 +19,11 @@ cockpit logic.
 
 ## Status
 
-**0.3.0** — feature parity with bee-tui. All 15 screens stream
-live data, an in-app alerts panel surfaces gate transitions, a
-bottom pane tails `bee::http` traffic, and the full bee-tui
-`--once` CLI verb surface is reachable for shell pipelines /
-CI.
+**0.4.0** — operational completeness. Webhook firing,
+native desktop notifications, GSOC subscriptions, pubsub history
+files, theme presets, and prebuilt installers for five
+platforms. v0.3 reached visual parity with bee-tui; v0.4 closes
+the operational gaps.
 
 | Screen | State |
 |---|---|
@@ -45,6 +45,18 @@ CI.
 
 ## Install
 
+Prebuilt installers (no Rust toolchain required):
+
+```sh
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/ethswarm-tools/beegui/releases/latest/download/beegui-installer.sh | sh
+
+# Windows
+powershell -c "irm https://github.com/ethswarm-tools/beegui/releases/latest/download/beegui-installer.ps1 | iex"
+```
+
+Or via cargo:
+
 ```sh
 cargo install beegui
 ```
@@ -56,6 +68,7 @@ beegui                            # connect to http://localhost:1633
 beegui --node http://host:1633    # explicit node URL
 beegui --token <bearer>           # restricted-mode auth
 beegui --config ~/beegui.toml     # explicit config file
+beegui --theme light              # auto | light | dark
 beegui http://a:1633 http://b:1633  # positional URLs (ad-hoc fleet)
 ```
 
@@ -78,6 +91,16 @@ default = true
 name = "remote"
 url = "http://bee.example.com:1633"
 token = "@env:BEE_TOKEN"
+
+[alerts]
+webhook_url = "https://hooks.slack.com/services/…"
+debounce_secs = 300
+
+[notifications]
+desktop = true        # libnotify / macOS notif center / Windows toast
+
+[ui]
+theme = "auto"        # auto | light | dark
 ```
 
 ### Keys

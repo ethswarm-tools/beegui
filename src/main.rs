@@ -23,7 +23,7 @@ use bee_cockpit_core::config::{
     Config, ConfigPaths, NodeConfig, load_raw, nodes_from_urls, normalize_url,
 };
 use bee_cockpit_core::fleet::{FleetSnapshot, spawn_poller};
-use bee_cockpit_core::alerts::DEFAULT_DEBOUNCE_SECS;
+use bee_cockpit_core::config::{AlertsConfig, NotificationsConfig};
 use bee_cockpit_core::log_capture::{self, LogCapture};
 use bee_cockpit_core::views::health::gates_for_with_stamps;
 use bee_cockpit_core::watch::BeeWatch;
@@ -76,6 +76,10 @@ struct Cli {
     /// Also reads $BEE_NODE_TOKEN.
     #[arg(long)]
     token: Option<String>,
+    /// Visual theme: `auto` (follows OS), `light`, or `dark`.
+    /// Overrides `[ui].theme` from config; default is `auto`.
+    #[arg(long)]
+    theme: Option<String>,
     /// Run a single verb and exit (no GUI). See `--once help`
     /// for the verb list (parity with bee-tui).
     #[arg(long)]
@@ -102,7 +106,7 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         return Ok(code);
     }
 
-    let resolved = resolve_nodes(&cli)?;
+    let (resolved, alerts_cfg, notif_cfg, ui_theme) = resolve_nodes(&cli)?;
 
     let runtime = Runtime::new()?;
     let cancel = CancellationToken::new();
@@ -114,6 +118,7 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         BeeWatch::start(api.clone(), &cancel)
     };
     let rt_handle = runtime.handle().clone();
+    let rt_handle_clone = rt_handle.clone();
     let fleet_rx = if resolved.all.len() > 1 {
         let _guard = runtime.enter();
         let (rx, _resync) = spawn_poller(
@@ -135,7 +140,7 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         fleet_rx,
         log_capture,
         log_pane_open: false,
-        alerts: alerts::AlertsPipeline::new(DEFAULT_DEBOUNCE_SECS),
+        alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
         alerts_open: false,
         screen: Screen::Health,
         state: ScreenState::default(),
@@ -147,8 +152,15 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 680.0]),
         ..Default::default()
     };
-    eframe::run_native("beegui", options, Box::new(|_cc| Ok(Box::new(app))))
-        .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))?;
+    eframe::run_native(
+        "beegui",
+        options,
+        Box::new(move |cc| {
+            ui_theme.apply(&cc.egui_ctx);
+            Ok(Box::new(app))
+        }),
+    )
+    .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))?;
     Ok(std::process::ExitCode::SUCCESS)
 }
 
@@ -157,11 +169,69 @@ struct ResolvedNodes {
     all: Vec<NodeConfig>,
 }
 
-fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
+#[derive(Debug, Clone, Copy)]
+enum Theme {
+    Auto,
+    Light,
+    Dark,
+}
+
+impl Theme {
+    fn parse(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "auto" | "default" => Some(Theme::Auto),
+            "light" => Some(Theme::Light),
+            "dark" | "mono" => Some(Theme::Dark),
+            _ => None,
+        }
+    }
+    fn apply(self, ctx: &egui::Context) {
+        match self {
+            Theme::Auto => ctx.set_visuals(default_visuals(ctx)),
+            Theme::Light => ctx.set_visuals(egui::Visuals::light()),
+            Theme::Dark => ctx.set_visuals(egui::Visuals::dark()),
+        }
+    }
+}
+
+fn default_visuals(ctx: &egui::Context) -> egui::Visuals {
+    match ctx.style().visuals.dark_mode {
+        true => egui::Visuals::dark(),
+        false => egui::Visuals::light(),
+    }
+}
+
+fn resolve_nodes(
+    cli: &Cli,
+) -> color_eyre::Result<(ResolvedNodes, AlertsConfig, NotificationsConfig, Theme)> {
     let token_override = cli
         .token
         .clone()
         .or_else(|| std::env::var("BEE_NODE_TOKEN").ok());
+
+    let cfg = match load_raw::<Config>(&PATHS, cli.config.as_deref()) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            if cli.config.is_some() {
+                return Err(color_eyre::eyre::eyre!("config: {e}"));
+            }
+            None
+        }
+    };
+    let alerts_cfg = cfg
+        .as_ref()
+        .map(|c| c.alerts.clone())
+        .unwrap_or_default();
+    let notif_cfg = cfg
+        .as_ref()
+        .map(|c| c.notifications.clone())
+        .unwrap_or_default();
+    let theme = cli
+        .theme
+        .as_deref()
+        .and_then(Theme::parse)
+        .or_else(|| cfg.as_ref().and_then(|c| Theme::parse(&c.ui.theme)))
+        .unwrap_or(Theme::Auto);
 
     if let Some(url) = &cli.node {
         let node = NodeConfig {
@@ -172,10 +242,15 @@ fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
             log_command: None,
             default: true,
         };
-        return Ok(ResolvedNodes {
-            active: node.clone(),
-            all: vec![node],
-        });
+        return Ok((
+            ResolvedNodes {
+                active: node.clone(),
+                all: vec![node],
+            },
+            alerts_cfg,
+            notif_cfg,
+            theme,
+        ));
     }
     if !cli.urls.is_empty() {
         let mut all = nodes_from_urls(&cli.urls);
@@ -191,7 +266,7 @@ fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
             .find(|n| n.default)
             .cloned()
             .unwrap_or_else(|| all[0].clone());
-        return Ok(ResolvedNodes { active, all });
+        return Ok((ResolvedNodes { active, all }, alerts_cfg, notif_cfg, theme));
     }
     if let Ok(url) = std::env::var("BEE_NODE_URL") {
         let node = NodeConfig {
@@ -202,35 +277,30 @@ fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
             log_command: None,
             default: true,
         };
-        return Ok(ResolvedNodes {
-            active: node.clone(),
-            all: vec![node],
-        });
+        return Ok((
+            ResolvedNodes {
+                active: node.clone(),
+                all: vec![node],
+            },
+            alerts_cfg,
+            notif_cfg,
+            theme,
+        ));
     }
 
-    match load_raw::<Config>(&PATHS, cli.config.as_deref()) {
-        Ok(cfg) => {
-            if !cfg.nodes.is_empty() {
-                let mut all = cfg.nodes.clone();
-                if let Some(t) = token_override.clone() {
-                    for n in &mut all {
-                        if n.token.is_none() {
-                            n.token = Some(t.clone());
-                        }
-                    }
+    if let Some(c) = cfg.as_ref()
+        && !c.nodes.is_empty()
+    {
+        let mut all = c.nodes.clone();
+        if let Some(t) = token_override.clone() {
+            for n in &mut all {
+                if n.token.is_none() {
+                    n.token = Some(t.clone());
                 }
-                let active = cfg
-                    .active_node()
-                    .cloned()
-                    .unwrap_or_else(|| all[0].clone());
-                return Ok(ResolvedNodes { active, all });
             }
         }
-        Err(e) => {
-            if cli.config.is_some() {
-                return Err(color_eyre::eyre::eyre!("config: {e}"));
-            }
-        }
+        let active = c.active_node().cloned().unwrap_or_else(|| all[0].clone());
+        return Ok((ResolvedNodes { active, all }, alerts_cfg, notif_cfg, theme));
     }
 
     let node = NodeConfig {
@@ -241,10 +311,15 @@ fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
         log_command: None,
         default: true,
     };
-    Ok(ResolvedNodes {
-        active: node.clone(),
-        all: vec![node],
-    })
+    Ok((
+        ResolvedNodes {
+            active: node.clone(),
+            all: vec![node],
+        },
+        alerts_cfg,
+        notif_cfg,
+        theme,
+    ))
 }
 
 struct App {
@@ -352,6 +427,30 @@ impl eframe::App for App {
                 .default_width(560.0)
                 .default_height(360.0)
                 .show(ctx, |ui| {
+                    let webhook = self.alerts.webhook_configured();
+                    let desktop = self.alerts.desktop_enabled();
+                    ui.horizontal(|ui| {
+                        let wh = if webhook { "✔ webhook" } else { "○ no webhook" };
+                        let ds = if desktop { "✔ desktop" } else { "○ no desktop" };
+                        ui.label(
+                            egui::RichText::new(wh)
+                                .small()
+                                .color(if webhook {
+                                    egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
+                                } else {
+                                    egui::Color32::GRAY
+                                }),
+                        );
+                        ui.label(
+                            egui::RichText::new(ds)
+                                .small()
+                                .color(if desktop {
+                                    egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
+                                } else {
+                                    egui::Color32::GRAY
+                                }),
+                        );
+                    });
                     if self.alerts.len() == 0 {
                         ui.label(
                             egui::RichText::new("no alerts captured yet.")

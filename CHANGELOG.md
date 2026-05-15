@@ -11,6 +11,53 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.4.0] - 2026-05-15
+
+The "operational completeness" release. v0.3 reached visual parity
+with bee-tui; v0.4 closes the operational gaps: webhook firing,
+native desktop notifications, GSOC subscriptions, pubsub history
+files, theme presets, and prebuilt installers for five platforms
+via cargo-dist.
+
+### Added
+
+- **Alerts webhook firing.** Gate transitions surfaced by
+  `AlertsPipeline` now POST to `[alerts] webhook_url` via
+  `bee_cockpit_core::alerts::fire`. Slack/Discord-compatible
+  body, 10-second timeout, single warn-log on failure.
+- **Native desktop notifications.** `[notifications] desktop =
+  true` raises an OS-level notification on every Fail/Warn
+  transition (libnotify on Linux via zbus, Notification Center
+  on macOS, toast on Windows — all through `notify-rust`).
+- **GSOC subscribe.** S14 Pubsub now toggles between PSS
+  (topic-only) and GSOC (owner + identifier). Same view layer,
+  same ring buffer.
+- **Pubsub history file.** Optional path field in S14; when
+  populated, every received message is appended as JSONL via
+  `bee_cockpit_core::pubsub::open_history_writer` with 64 MiB
+  rotation + 5-file retention. Replayable by any tool that
+  understands the same format.
+- **Theme presets.** `--theme {auto,light,dark}` CLI flag or
+  `[ui] theme = "..."` config. `auto` follows egui's
+  OS-derived default; `light` / `dark` lock the visual scheme.
+- **cargo-dist installers.** `dist-workspace.toml` + Release
+  workflow build prebuilt binaries for darwin (x86_64 +
+  aarch64), linux (x86_64 + aarch64), and windows (x86_64) on
+  every tag push; shell + powershell one-liner installers fetch
+  from the GitHub release.
+- **Alerts panel diagnostics.** Status chips at the top of the
+  popup show whether webhook firing and desktop notifications
+  are active for the current config.
+
+### Notes
+
+- Operational parity with bee-tui modulo command-bar / `:verb`
+  interactive flows. The CLI `--once` surface and the GUI
+  screens cover the rest.
+- Release profile tuned for installer size (`lto = "thin"` in
+  `[profile.dist]`, `opt-level = "s"` + `strip = true` in
+  `[profile.release]`).
+
 ## [0.3.0] - 2026-05-15
 
 The "feature parity" release. Every placeholder screen now ships a

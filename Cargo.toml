@@ -1,6 +1,6 @@
 [package]
 name = "beegui"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Desktop GUI cockpit for Ethereum Swarm Bee node operators. Sibling of bee-tui — same cockpit logic via bee-cockpit-core, rendered with egui."
@@ -18,6 +18,7 @@ clap = { version = "4.5", features = ["derive"] }
 color-eyre = "0.6"
 eframe = "0.29"
 egui = "0.29"
+notify-rust = { version = "4", default-features = false, features = ["z"] }
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-util = "0.7"
@@ -31,3 +32,14 @@ serde_json = "1"
 [[bin]]
 name = "beegui"
 path = "src/main.rs"
+
+# Release-profile tuning the cargo-dist build inherits from.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[profile.dist]
+inherits = "release"
+lto = "thin"

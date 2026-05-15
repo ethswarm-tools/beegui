@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "beegui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bee-cockpit-core",
  "bee-rs",
@@ -587,6 +587,7 @@ dependencies = [
  "config",
  "eframe",
  "egui",
+ "notify-rust",
  "serde",
  "serde_json",
  "strum",
