@@ -589,6 +589,7 @@ dependencies = [
  "strum",
  "tokio",
  "tokio-util",
+ "tracing",
 ]
 
 [[package]]

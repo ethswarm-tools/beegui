@@ -14,15 +14,21 @@ mod screens;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use std::time::Duration;
+
 use bee_cockpit_core::api::ApiClient;
 use bee_cockpit_core::config::{
     Config, ConfigPaths, NodeConfig, load_raw, nodes_from_urls, normalize_url,
 };
+use bee_cockpit_core::fleet::{FleetSnapshot, spawn_poller};
 use bee_cockpit_core::watch::BeeWatch;
 use clap::Parser;
 use screens::{Screen, ScreenState};
 use tokio::runtime::Runtime;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
+
+const FLEET_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 const PATHS: ConfigPaths = ConfigPaths {
     app_name: "beegui",
@@ -57,20 +63,37 @@ struct Cli {
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
-    let node = resolve_node(&cli)?;
+    let resolved = resolve_nodes(&cli)?;
 
     let runtime = Runtime::new()?;
     let cancel = CancellationToken::new();
-    let url = node.url.clone();
+    let active = resolved.active.clone();
+    let url = active.url.clone();
+    let api = Arc::new(ApiClient::from_node(&active)?);
     let watch = {
-        let client = Arc::new(ApiClient::from_node(&node)?);
         let _guard = runtime.enter();
-        BeeWatch::start(client, &cancel)
+        BeeWatch::start(api.clone(), &cancel)
+    };
+    let rt_handle = runtime.handle().clone();
+    let fleet_rx = if resolved.all.len() > 1 {
+        let _guard = runtime.enter();
+        let (rx, _resync) = spawn_poller(
+            resolved.all.clone(),
+            cancel.child_token(),
+            FLEET_POLL_INTERVAL,
+        );
+        Some(rx)
+    } else {
+        None
     };
 
     let app = App {
         url,
+        active_name: active.name,
+        api,
+        rt_handle,
         watch,
+        fleet_rx,
         screen: Screen::Health,
         state: ScreenState::default(),
         _runtime: runtime,
@@ -85,39 +108,78 @@ fn main() -> color_eyre::Result<()> {
         .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))
 }
 
-fn resolve_node(cli: &Cli) -> color_eyre::Result<NodeConfig> {
+struct ResolvedNodes {
+    active: NodeConfig,
+    all: Vec<NodeConfig>,
+}
+
+fn resolve_nodes(cli: &Cli) -> color_eyre::Result<ResolvedNodes> {
+    let token_override = cli
+        .token
+        .clone()
+        .or_else(|| std::env::var("BEE_NODE_TOKEN").ok());
+
     if let Some(url) = &cli.node {
-        return Ok(NodeConfig {
+        let node = NodeConfig {
             name: "cli".into(),
             url: normalize_url(url),
-            token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+            token: token_override,
             log_file: None,
             log_command: None,
             default: true,
+        };
+        return Ok(ResolvedNodes {
+            active: node.clone(),
+            all: vec![node],
         });
     }
     if !cli.urls.is_empty() {
-        return Ok(nodes_from_urls(&cli.urls).into_iter().next().unwrap());
+        let mut all = nodes_from_urls(&cli.urls);
+        if let Some(t) = token_override.clone() {
+            for n in &mut all {
+                if n.token.is_none() {
+                    n.token = Some(t.clone());
+                }
+            }
+        }
+        let active = all
+            .iter()
+            .find(|n| n.default)
+            .cloned()
+            .unwrap_or_else(|| all[0].clone());
+        return Ok(ResolvedNodes { active, all });
     }
     if let Ok(url) = std::env::var("BEE_NODE_URL") {
-        return Ok(NodeConfig {
+        let node = NodeConfig {
             name: "env".into(),
             url: normalize_url(&url),
-            token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+            token: token_override,
             log_file: None,
             log_command: None,
             default: true,
+        };
+        return Ok(ResolvedNodes {
+            active: node.clone(),
+            all: vec![node],
         });
     }
 
     match load_raw::<Config>(&PATHS, cli.config.as_deref()) {
         Ok(cfg) => {
-            if let Some(active) = cfg.active_node() {
-                let mut node = active.clone();
-                if let Some(t) = cli.token.clone() {
-                    node.token = Some(t);
+            if !cfg.nodes.is_empty() {
+                let mut all = cfg.nodes.clone();
+                if let Some(t) = token_override.clone() {
+                    for n in &mut all {
+                        if n.token.is_none() {
+                            n.token = Some(t.clone());
+                        }
+                    }
                 }
-                return Ok(node);
+                let active = cfg
+                    .active_node()
+                    .cloned()
+                    .unwrap_or_else(|| all[0].clone());
+                return Ok(ResolvedNodes { active, all });
             }
         }
         Err(e) => {
@@ -127,19 +189,27 @@ fn resolve_node(cli: &Cli) -> color_eyre::Result<NodeConfig> {
         }
     }
 
-    Ok(NodeConfig {
+    let node = NodeConfig {
         name: "default".into(),
         url: DEFAULT_URL.to_string(),
-        token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+        token: token_override,
         log_file: None,
         log_command: None,
         default: true,
+    };
+    Ok(ResolvedNodes {
+        active: node.clone(),
+        all: vec![node],
     })
 }
 
 struct App {
     url: String,
+    active_name: String,
+    api: Arc<ApiClient>,
+    rt_handle: tokio::runtime::Handle,
     watch: BeeWatch,
+    fleet_rx: Option<watch::Receiver<FleetSnapshot>>,
     screen: Screen,
     state: ScreenState,
     _runtime: Runtime,
@@ -184,7 +254,19 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            screens::draw(self.screen, ui, &self.watch, &mut self.state, &self.url);
+            screens::draw(
+                self.screen,
+                ui,
+                &self.watch,
+                &mut self.state,
+                screens::DrawContext {
+                    url: &self.url,
+                    active_name: &self.active_name,
+                    api: self.api.clone(),
+                    rt: self.rt_handle.clone(),
+                    fleet_rx: self.fleet_rx.as_ref(),
+                },
+            );
         });
     }
 }

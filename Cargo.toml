@@ -21,6 +21,7 @@ egui = "0.29"
 strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-util = "0.7"
+tracing = "0.1"
 
 [[bin]]
 name = "beegui"

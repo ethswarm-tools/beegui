@@ -1,8 +1,22 @@
 //! Screen registry. Each screen module owns its widget rendering;
 //! the data layer comes from [`bee_cockpit_core::views`].
 
+use std::sync::Arc;
+
+use bee_cockpit_core::api::ApiClient;
+use bee_cockpit_core::fleet::FleetSnapshot;
 use bee_cockpit_core::watch::BeeWatch;
 use strum::{EnumIter, IntoEnumIterator};
+use tokio::runtime::Handle;
+use tokio::sync::watch;
+
+pub struct DrawContext<'a> {
+    pub url: &'a str,
+    pub active_name: &'a str,
+    pub api: Arc<ApiClient>,
+    pub rt: Handle,
+    pub fleet_rx: Option<&'a watch::Receiver<FleetSnapshot>>,
+}
 
 pub mod api_health;
 pub mod feed_timeline;
@@ -23,6 +37,10 @@ pub mod watchlist;
 #[derive(Default)]
 pub struct ScreenState {
     pub warmup: warmup::WarmupState,
+    pub manifest: manifest::ManifestState,
+    pub feed_timeline: feed_timeline::FeedTimelineState,
+    pub watchlist: watchlist::WatchlistState,
+    pub pubsub: pubsub::PubsubState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
@@ -83,7 +101,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     watch: &BeeWatch,
     state: &mut ScreenState,
-    url: &str,
+    ctx: DrawContext<'_>,
 ) {
     match screen {
         Screen::Health => health::draw(ui, watch),
@@ -93,13 +111,17 @@ pub fn draw(
         Screen::Warmup => warmup::draw(ui, watch, &mut state.warmup),
         Screen::Peers => peers::draw(ui, watch),
         Screen::Network => network::draw(ui, watch),
-        Screen::ApiHealth => api_health::draw(ui, watch, url),
+        Screen::ApiHealth => api_health::draw(ui, watch, ctx.url),
         Screen::Tags => tags::draw(ui, watch),
         Screen::Pins => pins::draw(ui, watch),
-        Screen::Manifest => manifest::draw(ui),
-        Screen::Watchlist => watchlist::draw(ui),
-        Screen::FeedTimeline => feed_timeline::draw(ui),
-        Screen::Pubsub => pubsub::draw(ui),
-        Screen::Fleet => fleet::draw(ui),
+        Screen::Manifest => manifest::draw(ui, &mut state.manifest, ctx.api.clone(), &ctx.rt),
+        Screen::Watchlist => {
+            watchlist::draw(ui, &mut state.watchlist, ctx.api.clone(), &ctx.rt)
+        }
+        Screen::FeedTimeline => {
+            feed_timeline::draw(ui, &mut state.feed_timeline, ctx.api.clone(), &ctx.rt)
+        }
+        Screen::Pubsub => pubsub::draw(ui, &mut state.pubsub, ctx.api.clone(), &ctx.rt),
+        Screen::Fleet => fleet::draw(ui, ctx.fleet_rx, ctx.active_name),
     }
 }
