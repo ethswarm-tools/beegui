@@ -41,6 +41,13 @@ impl Default for WatchlistState {
     }
 }
 
+impl WatchlistState {
+    pub fn add_external(&mut self, reference: String, api: &Arc<ApiClient>, rt: &Handle) {
+        self.input = reference;
+        add_ref(self, api, rt);
+    }
+}
+
 pub fn draw(ui: &mut egui::Ui, state: &mut WatchlistState, api: Arc<ApiClient>, rt: &Handle) {
     drain(state);
 

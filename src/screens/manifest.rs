@@ -49,6 +49,14 @@ impl Default for ManifestState {
     }
 }
 
+impl ManifestState {
+    /// Programmatic load triggered by the palette's `:inspect <ref>`.
+    pub fn load_external(&mut self, reference: String, api: &Arc<ApiClient>, rt: &Handle) {
+        self.input = reference;
+        start_load(self, api, rt);
+    }
+}
+
 pub fn draw(ui: &mut egui::Ui, state: &mut ManifestState, api: Arc<ApiClient>, rt: &Handle) {
     drain_results(state);
 

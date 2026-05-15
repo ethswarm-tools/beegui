@@ -36,6 +36,24 @@ impl Default for FeedTimelineState {
     }
 }
 
+impl FeedTimelineState {
+    pub fn load_external(
+        &mut self,
+        owner: String,
+        topic: String,
+        max: Option<u64>,
+        api: &Arc<ApiClient>,
+        rt: &Handle,
+    ) {
+        self.owner_input = owner;
+        self.topic_input = topic;
+        if let Some(m) = max {
+            self.max_entries_input = m.to_string();
+        }
+        start(self, api, rt);
+    }
+}
+
 pub fn draw(ui: &mut egui::Ui, state: &mut FeedTimelineState, api: Arc<ApiClient>, rt: &Handle) {
     drain(state);
 

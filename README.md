@@ -19,11 +19,13 @@ cockpit logic.
 
 ## Status
 
-**0.4.0** — operational completeness. Webhook firing,
-native desktop notifications, GSOC subscriptions, pubsub history
-files, theme presets, and prebuilt installers for five
-platforms. v0.3 reached visual parity with bee-tui; v0.4 closes
-the operational gaps.
+**0.5.0** — interactive command palette closes the last bee-tui
+parity gap. Type `:` (or `Ctrl+P`) to filter verbs; `:hash`,
+`:cid`, `:inspect`, `:feed-timeline`, `:durability`,
+`:diagnose`, `:go <screen>` and friends are reachable from the
+keyboard. Earlier 0.4 capabilities — webhook firing, native
+desktop notifications, GSOC + pubsub history, theme presets,
+prebuilt cargo-dist installers — remain.
 
 | Screen | State |
 |---|---|
@@ -109,8 +111,11 @@ theme = "auto"        # auto | light | dark
 |---|---|
 | `1`–`9` | Jump to that screen |
 | `Tab` / `Shift+Tab` | Cycle screens |
+| `:` or `Ctrl+P` | Open command palette |
+| `?` | Open the help overlay |
 | `Ctrl+L` | Toggle the bottom log pane |
 | `Ctrl+A` | Toggle the alerts popup |
+| `Esc` | Close any overlay |
 | Click a tab | Same as `1`–`9` |
 
 ### `--once` verbs (no GUI)

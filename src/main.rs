@@ -11,6 +11,7 @@
 
 mod alerts;
 mod once;
+mod palette;
 mod screens;
 
 use std::path::PathBuf;
@@ -142,6 +143,8 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         log_pane_open: false,
         alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
         alerts_open: false,
+        palette: palette::Palette::default(),
+        help_open: false,
         screen: Screen::Health,
         state: ScreenState::default(),
         _runtime: runtime,
@@ -333,6 +336,8 @@ struct App {
     log_pane_open: bool,
     alerts: alerts::AlertsPipeline,
     alerts_open: bool,
+    palette: palette::Palette,
+    help_open: bool,
     screen: Screen,
     state: ScreenState,
     _runtime: Runtime,
@@ -340,10 +345,14 @@ struct App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
         self.handle_keys(ctx);
         self.observe_alerts();
+        let pumped = self.palette.pump();
+        for a in pumped {
+            self.apply_palette_action(a, frame);
+        }
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.add_space(4.0);
@@ -491,32 +500,76 @@ impl eframe::App for App {
                     log_capture: &self.log_capture,
                 },
             );
+            if let Some(banner) = self.palette.banner().cloned() {
+                let painter = ui.painter();
+                let rect = ui.max_rect();
+                let bar_h = 28.0;
+                let banner_rect = egui::Rect::from_min_size(
+                    egui::pos2(rect.left(), rect.bottom() - bar_h),
+                    egui::vec2(rect.width(), bar_h),
+                );
+                painter.rect_filled(banner_rect, 0.0, banner.level.color().gamma_multiply(0.18));
+                painter.text(
+                    banner_rect.left_center() + egui::vec2(12.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    &banner.text,
+                    egui::FontId::monospace(13.0),
+                    banner.level.color(),
+                );
+            }
         });
+
+        self.draw_palette(ctx);
+        self.draw_help(ctx);
     }
 }
 
 impl App {
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        let palette_open = self.palette.open;
+        let help_open = self.help_open;
+        let mut next_screen: Option<Screen> = None;
+        let mut toggle_logs = false;
+        let mut toggle_alerts = false;
+        let mut toggle_help = false;
+        let mut open_palette = false;
+        let mut close_help = false;
         ctx.input(|i| {
-            let screens = Screen::all();
-            let idx = self.screen.index();
+            if palette_open {
+                return;
+            }
+            if i.key_pressed(egui::Key::Escape) && help_open {
+                close_help = true;
+            }
+            // : or Ctrl+P opens the palette
+            let typed_colon = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Text(t) if t == ":")
+            });
+            if typed_colon || (i.modifiers.ctrl && i.key_pressed(egui::Key::P)) {
+                open_palette = true;
+                return;
+            }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::L) {
-                self.log_pane_open = !self.log_pane_open;
+                toggle_logs = true;
             }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::A) {
-                self.alerts_open = !self.alerts_open;
-                if self.alerts_open {
-                    self.alerts.mark_read();
-                }
+                toggle_alerts = true;
+            }
+            if i.key_pressed(egui::Key::Questionmark)
+                || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
+            {
+                toggle_help = true;
             }
             if i.key_pressed(egui::Key::Tab) {
+                let screens = Screen::all();
+                let idx = self.screen.index();
                 let next = if i.modifiers.shift {
                     (idx + screens.len() - 1) % screens.len()
                 } else {
                     (idx + 1) % screens.len()
                 };
                 if let Some(s) = Screen::from_index(next) {
-                    self.screen = s;
+                    next_screen = Some(s);
                 }
             }
             for (n, key) in [
@@ -530,13 +583,34 @@ impl App {
                 (8, egui::Key::Num8),
                 (9, egui::Key::Num9),
             ] {
-                if i.key_pressed(key)
-                    && let Some(s) = Screen::from_index(n - 1)
-                {
-                    self.screen = s;
+                if i.key_pressed(key) {
+                    if let Some(s) = Screen::from_index(n - 1) {
+                        next_screen = Some(s);
+                    }
                 }
             }
         });
+        if open_palette {
+            self.palette.open();
+        }
+        if toggle_logs {
+            self.log_pane_open = !self.log_pane_open;
+        }
+        if toggle_alerts {
+            self.alerts_open = !self.alerts_open;
+            if self.alerts_open {
+                self.alerts.mark_read();
+            }
+        }
+        if toggle_help {
+            self.help_open = !self.help_open;
+        }
+        if close_help {
+            self.help_open = false;
+        }
+        if let Some(s) = next_screen {
+            self.screen = s;
+        }
     }
 
     fn observe_alerts(&mut self) {
@@ -545,6 +619,155 @@ impl App {
         let stamps = self.watch.stamps().borrow().clone();
         let gates = gates_for_with_stamps(&health, Some(&topology), Some(&stamps));
         self.alerts.observe(&gates);
+    }
+
+    fn draw_palette(&mut self, ctx: &egui::Context) {
+        if !self.palette.open {
+            return;
+        }
+        // ESC closes; Up/Down navigate; Enter submits.
+        let mut submit = false;
+        let mut close = false;
+        let mut sel_prev = false;
+        let mut sel_next = false;
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                close = true;
+            }
+            if i.key_pressed(egui::Key::Enter) {
+                submit = true;
+            }
+            if i.key_pressed(egui::Key::ArrowUp) {
+                sel_prev = true;
+            }
+            if i.key_pressed(egui::Key::ArrowDown) {
+                sel_next = true;
+            }
+        });
+        let mut actions: Vec<palette::PaletteAction> = Vec::new();
+        egui::Area::new(egui::Id::new("palette"))
+            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(560.0);
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.palette.input)
+                            .hint_text(": type a verb…  (Esc to close, ↑/↓ to pick)")
+                            .desired_width(540.0)
+                            .lock_focus(true),
+                    );
+                    r.request_focus();
+                    ui.separator();
+                    let suggestions = self.palette.suggestions();
+                    let sel = self.palette.selected.min(suggestions.len().saturating_sub(1));
+                    for (i, v) in suggestions.iter().enumerate().take(10) {
+                        let highlighted = i == sel;
+                        let bg = if highlighted {
+                            egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        let frame = egui::Frame::none().fill(bg).inner_margin(egui::Margin::same(4.0));
+                        frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(format!(":{}", v.name)).strong().monospace());
+                                ui.label(egui::RichText::new(v.summary).weak());
+                            });
+                            if highlighted {
+                                ui.label(egui::RichText::new(v.usage).monospace().weak().small());
+                            }
+                        });
+                    }
+                });
+            });
+        if sel_prev {
+            self.palette.select_prev();
+        }
+        if sel_next {
+            self.palette.select_next();
+        }
+        if submit {
+            actions = self
+                .palette
+                .submit(self.api.clone(), &self.rt_handle, &self.log_capture);
+        } else if close {
+            self.palette.close();
+        }
+        if !actions.is_empty() {
+            for a in actions {
+                self.apply_palette_action_simple(a);
+            }
+        }
+    }
+
+    fn draw_help(&mut self, ctx: &egui::Context) {
+        if !self.help_open {
+            return;
+        }
+        let mut open = self.help_open;
+        egui::Window::new("Help")
+            .open(&mut open)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                ui.label(egui::RichText::new("Keys").strong());
+                egui::Grid::new("help-keys")
+                    .spacing([16.0, 2.0])
+                    .show(ui, |ui| {
+                        for (k, v) in &[
+                            ("1–9", "switch screen"),
+                            ("Tab / Shift+Tab", "cycle screens"),
+                            (": / Ctrl+P", "open command palette"),
+                            ("Ctrl+L", "toggle bee::http log pane"),
+                            ("Ctrl+A", "toggle alerts panel"),
+                            ("?", "this help"),
+                            ("Esc", "close any overlay"),
+                        ] {
+                            ui.label(egui::RichText::new(*k).monospace());
+                            ui.label(*v);
+                            ui.end_row();
+                        }
+                    });
+                ui.separator();
+                ui.label(egui::RichText::new("Verbs").strong());
+                for v in palette::VERBS {
+                    ui.label(egui::RichText::new(format!(":{}", v.name)).monospace().strong());
+                    ui.label(egui::RichText::new(v.summary).weak().small());
+                    ui.label(egui::RichText::new(v.usage).monospace().small());
+                    ui.add_space(4.0);
+                }
+            });
+        self.help_open = open;
+    }
+
+    fn apply_palette_action_simple(&mut self, a: palette::PaletteAction) {
+        match a {
+            palette::PaletteAction::SwitchScreen(s) => self.screen = s,
+            palette::PaletteAction::ToggleLogs => self.log_pane_open = !self.log_pane_open,
+            palette::PaletteAction::ToggleAlerts => {
+                self.alerts_open = !self.alerts_open;
+                if self.alerts_open {
+                    self.alerts.mark_read();
+                }
+            }
+            palette::PaletteAction::ShowHelp => self.help_open = true,
+            palette::PaletteAction::Quit => std::process::exit(0),
+            palette::PaletteAction::LoadManifest(r) => {
+                self.state.manifest.load_external(r, &self.api, &self.rt_handle);
+            }
+            palette::PaletteAction::LoadFeedTimeline { owner, topic, max } => {
+                self.state
+                    .feed_timeline
+                    .load_external(owner, topic, max, &self.api, &self.rt_handle);
+            }
+            palette::PaletteAction::WatchlistAdd(r) => {
+                self.state.watchlist.add_external(r, &self.api, &self.rt_handle);
+            }
+        }
+    }
+
+    fn apply_palette_action(&mut self, a: palette::PaletteAction, _frame: &mut eframe::Frame) {
+        self.apply_palette_action_simple(a);
     }
 
     fn connection_dot(&self) -> egui::Color32 {

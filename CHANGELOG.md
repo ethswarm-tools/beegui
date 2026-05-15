@@ -11,6 +11,48 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.5.0] - 2026-05-15
+
+The "command palette" release. The last interactive parity gap
+vs bee-tui — typing verbs to drive the cockpit — closes here.
+
+### Added
+
+- **Command palette.** Open with `:` or `Ctrl+P`. Filter the verb
+  list by typing; navigate with `↑/↓`; submit with `Enter`;
+  dismiss with `Esc`. Each suggestion shows a one-line summary
+  and a usage hint when highlighted.
+- **Verbs.** First batch lands with v0.5:
+  - `:go <screen>` (also bare `:health`, `:stamps`, etc.) —
+    switch screens by name.
+  - `:inspect <ref>` / `:manifest <ref>` — jump to S11 and load
+    that root reference.
+  - `:feed-timeline <owner> <topic> [max]` — jump to S13 and
+    walk the feed.
+  - `:durability <ref>` — jump to S12, add the reference, run
+    the check.
+  - `:hash <path>` — compute swarm hash, surface as a banner.
+  - `:cid <ref> [manifest|feed]` — compute CID, surface as a
+    banner.
+  - `:diagnose` — run a 10-second pprof bundle against the
+    active node; banner reports the output path on success.
+  - `:logs` / `:alerts` — toggle the bottom log pane / alerts
+    popup (also `Ctrl+L` / `Ctrl+A`).
+  - `:help` — open the help overlay; also `?`.
+  - `:quit` / `:q` — exit beegui.
+- **Help overlay.** `?` (or `:help`) opens a scrollable window
+  listing every keybinding and verb with usage strings.
+- **Result banner.** Verbs that return a one-shot answer
+  (`:hash`, `:cid`, `:diagnose`) surface their output as a
+  transient banner at the bottom of the screen for 8 seconds.
+
+### Notes
+
+- Operational parity with bee-tui modulo bee-tui's `:upload`,
+  `:batch buy/topup/dilute/extend`, `:set <knob>`, and the
+  per-screen drill commands. Most of those are reachable via
+  `beegui --once`; in-GUI execution is on the v0.6 backlog.
+
 ## [0.4.0] - 2026-05-15
 
 The "operational completeness" release. v0.3 reached visual parity
