@@ -3,9 +3,15 @@
 use bee_cockpit_core::views::tags::{TagRow, TagStatus, view_for};
 use bee_cockpit_core::watch::BeeWatch;
 
-pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
+#[derive(Default)]
+pub struct TagsScreenState {
+    selected: usize,
+}
+
+pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch, state: &mut TagsScreenState) {
     let snap = watch.tags().borrow().clone();
     let view = view_for(&snap);
+    arrow_nav(ui, &mut state.selected, view.rows.len());
 
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(format!("tags {}", view.totals.tags)).strong());
@@ -22,42 +28,68 @@ pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
     }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("tags")
-            .num_columns(6)
-            .spacing([14.0, 2.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("status").strong());
-                ui.label(egui::RichText::new("uid").strong());
-                ui.label(egui::RichText::new("name").strong());
-                ui.label(egui::RichText::new("progress").strong());
-                ui.label(egui::RichText::new("counts").strong());
-                ui.label(egui::RichText::new("ref").strong());
-                ui.end_row();
-                for row in &view.rows {
-                    draw_row(ui, row);
-                    ui.end_row();
-                }
-            });
+        for (i, row) in view.rows.iter().enumerate() {
+            let resp = draw_row(ui, row, i == state.selected);
+            if resp.clicked() {
+                state.selected = i;
+            }
+        }
     });
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &TagRow) {
-    ui.label(egui::RichText::new(status_label(row.status)).color(status_color(row.status)));
-    ui.label(egui::RichText::new(row.uid.to_string()).monospace());
-    ui.label(&row.name);
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(format!("{}%", row.completion_pct)).monospace());
-        ui.add(egui::ProgressBar::new(row.completion_pct as f32 / 100.0).desired_width(120.0));
+fn arrow_nav(ui: &mut egui::Ui, selected: &mut usize, n: usize) {
+    if ui.ctx().memory(|m| m.focused().is_some()) {
+        return;
+    }
+    ui.input(|i| {
+        if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+            *selected = selected.saturating_sub(1);
+        }
+        if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J)) && *selected + 1 < n
+        {
+            *selected += 1;
+        }
     });
-    ui.label(
-        egui::RichText::new(format!(
-            "split {} · sent {} · synced {} / {}",
-            row.split, row.sent, row.synced, row.total
-        ))
-        .monospace(),
-    );
-    ui.label(egui::RichText::new(&row.address_short).monospace().weak());
+    if *selected >= n.max(1) {
+        *selected = n.saturating_sub(1);
+    }
+}
+
+fn draw_row(ui: &mut egui::Ui, row: &TagRow, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(4.0, 1.0);
+    let resp = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(status_label(row.status))
+                        .color(status_color(row.status))
+                        .monospace(),
+                );
+                ui.label(egui::RichText::new(row.uid.to_string()).monospace());
+                ui.label(egui::RichText::new(&row.name).monospace());
+                ui.add(
+                    egui::ProgressBar::new(row.completion_pct as f32 / 100.0)
+                        .desired_width(120.0)
+                        .text(format!("{}%", row.completion_pct)),
+                );
+                ui.label(
+                    egui::RichText::new(format!(
+                        "split {} · sent {} · synced {} / {}",
+                        row.split, row.sent, row.synced, row.total
+                    ))
+                    .monospace(),
+                );
+                ui.label(egui::RichText::new(&row.address_short).monospace().weak());
+            });
+        })
+        .response;
+    resp.interact(egui::Sense::click())
 }
 
 fn status_label(s: TagStatus) -> &'static str {

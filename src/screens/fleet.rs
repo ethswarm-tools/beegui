@@ -6,6 +6,11 @@ use bee_cockpit_core::fleet::{FleetSnapshot, FleetStatus};
 use bee_cockpit_core::views::fleet::{FleetRowView, FleetView, view_for};
 use tokio::sync::watch;
 
+#[derive(Default)]
+pub struct FleetScreenState {
+    selected: usize,
+}
+
 fn status_color(s: FleetStatus) -> egui::Color32 {
     match s {
         FleetStatus::Pass => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
@@ -15,7 +20,12 @@ fn status_color(s: FleetStatus) -> egui::Color32 {
     }
 }
 
-pub fn draw(ui: &mut egui::Ui, rx: Option<&watch::Receiver<FleetSnapshot>>, active_name: &str) {
+pub fn draw(
+    ui: &mut egui::Ui,
+    rx: Option<&watch::Receiver<FleetSnapshot>>,
+    active_name: &str,
+    state: &mut FleetScreenState,
+) {
     let Some(rx) = rx else {
         ui.vertical_centered(|ui| {
             ui.add_space(48.0);
@@ -36,11 +46,28 @@ pub fn draw(ui: &mut egui::Ui, rx: Option<&watch::Receiver<FleetSnapshot>>, acti
         return;
     };
     let snap = rx.borrow().clone();
-    let view = view_for(&snap, active_name, 0);
+    let view = view_for(&snap, active_name, state.selected);
+
+    let n = view.rows.len();
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                state.selected = state.selected.saturating_sub(1);
+            }
+            if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J))
+                && state.selected + 1 < n
+            {
+                state.selected += 1;
+            }
+        });
+    }
+    if state.selected >= n.max(1) {
+        state.selected = n.saturating_sub(1);
+    }
 
     draw_header(ui, &view);
     ui.add_space(8.0);
-    draw_rows(ui, &view.rows);
+    draw_rows(ui, &view.rows, &mut state.selected);
 }
 
 fn draw_header(ui: &mut egui::Ui, view: &FleetView) {
@@ -62,48 +89,55 @@ fn draw_header(ui: &mut egui::Ui, view: &FleetView) {
     });
 }
 
-fn draw_rows(ui: &mut egui::Ui, rows: &[FleetRowView]) {
+fn draw_rows(ui: &mut egui::Ui, rows: &[FleetRowView], selected: &mut usize) {
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("fleet")
-            .num_columns(6)
-            .spacing([14.0, 4.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("status").strong());
-                ui.label(egui::RichText::new("node").strong());
-                ui.label(egui::RichText::new("url").strong());
-                ui.label(egui::RichText::new("peers").strong());
-                ui.label(egui::RichText::new("worst TTL").strong());
-                ui.label(egui::RichText::new("ping").strong());
-                ui.end_row();
-                for row in rows {
-                    draw_row(ui, row);
-                    ui.end_row();
-                }
-            });
+        for (i, row) in rows.iter().enumerate() {
+            let resp = draw_row(ui, row, i == *selected);
+            if resp.clicked() {
+                *selected = i;
+            }
+        }
     });
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &FleetRowView) {
-    ui.label(egui::RichText::new(&row.status_label).color(status_color(row.status)));
-    let name = if row.active {
-        egui::RichText::new(&row.name).strong()
-    } else if row.default {
-        egui::RichText::new(format!("{} *", row.name))
+fn draw_row(ui: &mut egui::Ui, row: &FleetRowView, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
     } else {
-        egui::RichText::new(&row.name)
+        egui::Color32::TRANSPARENT
     };
-    ui.label(name);
-    ui.label(egui::RichText::new(&row.url).monospace().weak());
-    ui.label(egui::RichText::new(&row.peers_label).monospace());
-    ui.label(egui::RichText::new(&row.ttl_label).monospace());
-    if let Some(why) = &row.why {
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(4.0, 1.0);
+    let resp = frame.show(ui, |ui| draw_row_inner(ui, row)).response;
+    resp.interact(egui::Sense::click())
+}
+
+fn draw_row_inner(ui: &mut egui::Ui, row: &FleetRowView) {
+    ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new(format!("{} · {}", row.ping_label, why))
-                .color(egui::Color32::from_rgb(0xd0, 0x4a, 0x4a))
+            egui::RichText::new(&row.status_label)
+                .color(status_color(row.status))
                 .monospace(),
         );
-    } else {
-        ui.label(egui::RichText::new(&row.ping_label).monospace());
-    }
+        let name = if row.active {
+            egui::RichText::new(&row.name).strong()
+        } else if row.default {
+            egui::RichText::new(format!("{} *", row.name))
+        } else {
+            egui::RichText::new(&row.name)
+        };
+        ui.label(name);
+        ui.label(egui::RichText::new(&row.url).monospace().weak());
+        ui.label(egui::RichText::new(&row.peers_label).monospace());
+        ui.label(egui::RichText::new(&row.ttl_label).monospace());
+        if let Some(why) = &row.why {
+            ui.label(
+                egui::RichText::new(format!("{} · {}", row.ping_label, why))
+                    .color(egui::Color32::from_rgb(0xd0, 0x4a, 0x4a))
+                    .monospace(),
+            );
+        } else {
+            ui.label(egui::RichText::new(&row.ping_label).monospace());
+        }
+    });
 }

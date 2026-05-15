@@ -529,6 +529,10 @@ impl App {
     fn handle_keys(&mut self, ctx: &egui::Context) {
         let palette_open = self.palette.open;
         let help_open = self.help_open;
+        // When a text input owns focus, global shortcuts (digits, Tab,
+        // arrows, j/k) must NOT fire — the operator is typing into the
+        // field, not driving navigation.
+        let text_focused = ctx.memory(|m| m.focused().is_some());
         let mut next_screen: Option<Screen> = None;
         let mut toggle_logs = false;
         let mut toggle_alerts = false;
@@ -542,10 +546,12 @@ impl App {
             if i.key_pressed(egui::Key::Escape) && help_open {
                 close_help = true;
             }
-            // : or Ctrl+P opens the palette
-            let typed_colon = i.events.iter().any(|e| {
-                matches!(e, egui::Event::Text(t) if t == ":")
-            });
+            // Ctrl-modified shortcuts work even when typing in a text
+            // input (Ctrl+P / Ctrl+L / Ctrl+A are unambiguous).
+            let typed_colon = !text_focused
+                && i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Text(t) if t == ":"));
             if typed_colon || (i.modifiers.ctrl && i.key_pressed(egui::Key::P)) {
                 open_palette = true;
                 return;
@@ -556,10 +562,15 @@ impl App {
             if i.modifiers.ctrl && i.key_pressed(egui::Key::A) {
                 toggle_alerts = true;
             }
-            if i.key_pressed(egui::Key::Questionmark)
-                || (i.modifiers.shift && i.key_pressed(egui::Key::Slash))
+            if !text_focused
+                && (i.key_pressed(egui::Key::Questionmark)
+                    || (i.modifiers.shift && i.key_pressed(egui::Key::Slash)))
             {
                 toggle_help = true;
+            }
+            // Screen navigation only when nothing's typing.
+            if text_focused {
+                return;
             }
             if i.key_pressed(egui::Key::Tab) {
                 let screens = Screen::all();

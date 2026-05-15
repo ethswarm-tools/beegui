@@ -30,6 +30,7 @@ pub struct PubsubState {
     error: Option<String>,
     messages: VecDeque<PubsubMessage>,
     sub: Option<Subscription>,
+    selected: usize,
     incoming: mpsc::UnboundedReceiver<PubsubMessage>,
     incoming_tx: mpsc::UnboundedSender<PubsubMessage>,
 }
@@ -60,6 +61,7 @@ impl Default for PubsubState {
             error: None,
             messages: VecDeque::new(),
             sub: None,
+            selected: 0,
             incoming: rx,
             incoming_tx: tx,
         }
@@ -150,23 +152,52 @@ pub fn draw(ui: &mut egui::Ui, state: &mut PubsubState, api: Arc<ApiClient>, rt:
         return;
     }
 
+    // Arrow keys for selection. (Ignored when a text input is focused.)
+    let row_count = view.rows.len();
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                state.selected = state.selected.saturating_sub(1);
+            }
+            if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J))
+                && state.selected + 1 < row_count
+            {
+                state.selected += 1;
+            }
+        });
+    }
+    if state.selected >= row_count.max(1) {
+        state.selected = row_count.saturating_sub(1);
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("pubsub")
-            .num_columns(4)
-            .spacing([12.0, 2.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("time").strong());
-                ui.label(egui::RichText::new("kind").strong());
-                ui.label(egui::RichText::new("bytes").strong());
-                ui.label(egui::RichText::new("preview").strong());
-                ui.end_row();
-                for row in &view.rows {
-                    draw_row(ui, row);
-                    ui.end_row();
-                }
-            });
+        for (i, row) in view.rows.iter().enumerate() {
+            let resp = draw_row(ui, row, i == state.selected);
+            if resp.clicked() {
+                state.selected = i;
+            }
+        }
     });
+
+    if let Some(row) = view.rows.get(state.selected) {
+        ui.separator();
+        ui.label(egui::RichText::new("Selected message").strong());
+        ui.label(
+            egui::RichText::new(format!(
+                "{} · {} · channel {} · {} bytes",
+                row.time_label, row.kind_label, row.channel_short, row.payload_bytes
+            ))
+            .monospace()
+            .small()
+            .weak(),
+        );
+        egui::ScrollArea::vertical()
+            .id_salt("pubsub-detail")
+            .max_height(160.0)
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(&row.preview_long).monospace());
+            });
+    }
 }
 
 fn draw_pss_inputs(ui: &mut egui::Ui, state: &mut PubsubState) {
@@ -202,11 +233,25 @@ fn draw_gsoc_inputs(ui: &mut egui::Ui, state: &mut PubsubState) {
         });
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &PubsubRowView) {
-    ui.label(egui::RichText::new(&row.time_label).monospace().weak());
-    ui.label(egui::RichText::new(row.kind_label).strong());
-    ui.label(egui::RichText::new(row.payload_bytes.to_string()).monospace());
-    ui.label(egui::RichText::new(&row.preview_short).monospace());
+fn draw_row(ui: &mut egui::Ui, row: &PubsubRowView, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(4.0, 1.0);
+    let resp = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&row.time_label).monospace().weak());
+                ui.label(egui::RichText::new(row.kind_label).monospace().strong());
+                ui.label(egui::RichText::new(row.payload_bytes.to_string()).monospace());
+                ui.label(egui::RichText::new(&row.preview_short).monospace());
+            });
+        })
+        .response;
+    resp.interact(egui::Sense::click())
 }
 
 fn start(state: &mut PubsubState, api: &Arc<ApiClient>, rt: &Handle) {

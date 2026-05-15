@@ -43,6 +43,11 @@ pub struct ScreenState {
     pub feed_timeline: feed_timeline::FeedTimelineState,
     pub watchlist: watchlist::WatchlistState,
     pub pubsub: pubsub::PubsubState,
+    pub peers: peers::PeersScreenState,
+    pub stamps: stamps::StampsScreenState,
+    pub tags: tags::TagsScreenState,
+    pub pins: pins::PinsScreenState,
+    pub fleet: fleet::FleetScreenState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
@@ -107,15 +112,15 @@ pub fn draw(
 ) {
     match screen {
         Screen::Health => health::draw(ui, watch),
-        Screen::Stamps => stamps::draw(ui, watch),
+        Screen::Stamps => stamps::draw(ui, watch, &mut state.stamps, ctx.api.clone(), &ctx.rt),
         Screen::Swap => swap::draw(ui, watch),
         Screen::Lottery => lottery::draw(ui, watch),
         Screen::Warmup => warmup::draw(ui, watch, &mut state.warmup),
-        Screen::Peers => peers::draw(ui, watch),
+        Screen::Peers => peers::draw(ui, watch, &mut state.peers, ctx.api.clone(), &ctx.rt),
         Screen::Network => network::draw(ui, watch),
         Screen::ApiHealth => api_health::draw(ui, watch, ctx.url, ctx.log_capture),
-        Screen::Tags => tags::draw(ui, watch),
-        Screen::Pins => pins::draw(ui, watch),
+        Screen::Tags => tags::draw(ui, watch, &mut state.tags),
+        Screen::Pins => pins::draw(ui, watch, &mut state.pins),
         Screen::Manifest => manifest::draw(ui, &mut state.manifest, ctx.api.clone(), &ctx.rt),
         Screen::Watchlist => {
             watchlist::draw(ui, &mut state.watchlist, ctx.api.clone(), &ctx.rt)
@@ -124,6 +129,6 @@ pub fn draw(
             feed_timeline::draw(ui, &mut state.feed_timeline, ctx.api.clone(), &ctx.rt)
         }
         Screen::Pubsub => pubsub::draw(ui, &mut state.pubsub, ctx.api.clone(), &ctx.rt),
-        Screen::Fleet => fleet::draw(ui, ctx.fleet_rx, ctx.active_name),
+        Screen::Fleet => fleet::draw(ui, ctx.fleet_rx, ctx.active_name, &mut state.fleet),
     }
 }

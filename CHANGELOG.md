@@ -11,6 +11,55 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.7.0] - 2026-05-15
+
+The "navigation parity" release. Fixes the bug where clicking a
+peer didn't do anything; adds keyboard navigation (arrow keys +
+j/k) and per-row click handling across every list-based screen.
+
+### Fixed
+
+- **S6 Peers** — clicking a peer (or pressing Enter on the
+  selected row) now loads the **PeerDrillFetch** (balance,
+  cheques, settlement, ping, status_peers, local_status — six
+  parallel `/peers/...` calls) and renders the drill panel with
+  every field from bee-tui's S6 drill: balance, ping, settl.
+  in/out, last cheques in/out, storage radius, reserve size,
+  pullsync rate, batch commitment (with >5% outlier flag). Esc
+  closes. Up/Down/j/k navigate the peer list.
+- **S2 Stamps** — clicking a row (or Enter) loads
+  `get_postage_batch_buckets` for that batch and renders the
+  bucket-histogram drill (fill distribution across the six
+  bins + top-10 worst buckets by collisions + economics, when
+  present). Esc closes. Up/Down/j/k navigate.
+
+### Added
+
+- **Keyboard navigation** across every list-based screen:
+  arrow keys + j/k for selection; Enter or click triggers the
+  screen's primary action; Esc closes drill panels.
+- **Row click** semantics match bee-tui's Enter key for every
+  screen — operators with a mouse don't need the keyboard.
+  Where bee-tui used a cursor + Enter, beegui uses click =
+  select + drill (or click = select, Enter = drill).
+- **Pubsub selection** — clicking a message shows its full
+  payload preview in a detail pane below the table.
+- **Feed Timeline selection** — clicking an entry shows the
+  full reference hex (the table column shortens it to a
+  prefix).
+- **Focus-aware shortcuts.** Global key shortcuts (digit
+  screen-jumps, Tab cycling, `?` help, arrow nav) now suppress
+  themselves when a text input owns keyboard focus, so typing
+  `5` into the feed-timeline owner field no longer jumps to S5.
+
+### Notes
+
+- Selection highlight is a subtle blue band on the row; this
+  is the egui equivalent of bee-tui's cursor glyph.
+- Stamps and Peers drills run their fetches on the tokio
+  runtime and reflect the result on the next frame, identical
+  to bee-tui's flow.
+
 ## [0.6.0] - 2026-05-15
 
 The "active verbs" release. v0.5 added the palette + inspection

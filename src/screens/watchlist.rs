@@ -22,6 +22,7 @@ pub struct WatchlistState {
     refs: Vec<Reference>,
     history: VecDeque<DurabilityResult>,
     inflight: usize,
+    selected: usize,
     incoming: mpsc::UnboundedReceiver<DurabilityResult>,
     incoming_tx: mpsc::UnboundedSender<DurabilityResult>,
 }
@@ -35,6 +36,7 @@ impl Default for WatchlistState {
             refs: Vec::new(),
             history: VecDeque::new(),
             inflight: 0,
+            selected: 0,
             incoming: rx,
             incoming_tx: tx,
         }
@@ -104,39 +106,61 @@ pub fn draw(ui: &mut egui::Ui, state: &mut WatchlistState, api: Arc<ApiClient>, 
         return;
     }
 
+    let n = view.rows.len();
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                state.selected = state.selected.saturating_sub(1);
+            }
+            if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J))
+                && state.selected + 1 < n
+            {
+                state.selected += 1;
+            }
+        });
+    }
+    if state.selected >= n.max(1) {
+        state.selected = n.saturating_sub(1);
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("watchlist")
-            .num_columns(4)
-            .spacing([14.0, 2.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("status").strong());
-                ui.label(egui::RichText::new("reference").strong());
-                ui.label(egui::RichText::new("detail").strong());
-                ui.label(egui::RichText::new("age").strong());
-                ui.end_row();
-                for row in &view.rows {
-                    draw_row(ui, row);
-                    ui.end_row();
-                }
-            });
+        for (i, row) in view.rows.iter().enumerate() {
+            let resp = draw_row(ui, row, i == state.selected);
+            if resp.clicked() {
+                state.selected = i;
+            }
+        }
     });
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &WatchlistRow) {
+fn draw_row(ui: &mut egui::Ui, row: &WatchlistRow, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(4.0, 1.0);
     let color = if row.healthy {
         egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
     } else {
         egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)
     };
-    ui.label(egui::RichText::new(&row.status_label).color(color));
-    ui.label(egui::RichText::new(&row.reference_hex[..16]).monospace().weak());
-    ui.label(egui::RichText::new(&row.detail).monospace());
-    ui.label(
-        egui::RichText::new(format_age(row.age_seconds))
-            .monospace()
-            .weak(),
-    );
+    let resp = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&row.status_label).color(color));
+                ui.label(egui::RichText::new(&row.reference_hex[..16]).monospace().weak());
+                ui.label(egui::RichText::new(&row.detail).monospace());
+                ui.label(
+                    egui::RichText::new(format_age(row.age_seconds))
+                        .monospace()
+                        .weak(),
+                );
+            });
+        })
+        .response;
+    resp.interact(egui::Sense::click())
 }
 
 fn add_ref(state: &mut WatchlistState, api: &Arc<ApiClient>, rt: &Handle) {

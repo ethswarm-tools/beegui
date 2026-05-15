@@ -9,7 +9,12 @@ use bee::swarm::Reference;
 use bee_cockpit_core::views::pins::{CheckState, PinRow, SortMode, view_for};
 use bee_cockpit_core::watch::BeeWatch;
 
-pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
+#[derive(Default)]
+pub struct PinsScreenState {
+    selected: usize,
+}
+
+pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch, state: &mut PinsScreenState) {
     let snap = watch.pins().borrow().clone();
     let checks: HashMap<Reference, CheckState> = HashMap::new();
     let view = view_for(&snap, &checks, SortMode::Reference);
@@ -33,25 +38,41 @@ pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
         return;
     }
 
+    let n = view.rows.len();
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                state.selected = state.selected.saturating_sub(1);
+            }
+            if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J))
+                && state.selected + 1 < n
+            {
+                state.selected += 1;
+            }
+        });
+    }
+    if state.selected >= n.max(1) {
+        state.selected = n.saturating_sub(1);
+    }
+
     egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("pins")
-            .num_columns(2)
-            .spacing([14.0, 2.0])
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("reference").strong());
-                ui.label(egui::RichText::new("check").strong());
-                ui.end_row();
-                for row in &view.rows {
-                    draw_row(ui, row);
-                    ui.end_row();
-                }
-            });
+        for (i, row) in view.rows.iter().enumerate() {
+            let resp = draw_row(ui, row, i == state.selected);
+            if resp.clicked() {
+                state.selected = i;
+            }
+        }
     });
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &PinRow) {
-    ui.label(egui::RichText::new(&row.reference_short).monospace());
+fn draw_row(ui: &mut egui::Ui, row: &PinRow, selected: bool) -> egui::Response {
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(4.0, 1.0);
     let (label, color) = match &row.check {
         CheckState::Idle => ("unchecked", egui::Color32::GRAY),
         CheckState::Checking => ("checking…", egui::Color32::from_rgb(0xe0, 0xb0, 0x30)),
@@ -66,5 +87,13 @@ fn draw_row(ui: &mut egui::Ui, row: &PinRow) {
         CheckState::Ok { .. } => ("unhealthy", egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)),
         CheckState::Failed(_) => ("error", egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)),
     };
-    ui.label(egui::RichText::new(label).color(color));
+    let resp = frame
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&row.reference_short).monospace());
+                ui.label(egui::RichText::new(label).color(color));
+            });
+        })
+        .response;
+    resp.interact(egui::Sense::click())
 }

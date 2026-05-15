@@ -19,13 +19,12 @@ cockpit logic.
 
 ## Status
 
-**0.6.0** — active palette verbs. `:upload <path>`, `:batch
-buy|topup|dilute|extend`, `:pss`, `:feed-probe` join the
-inspection verbs from v0.5. Drop a file onto the beegui window
-to pre-fill `:upload`. Earlier capabilities — webhook firing,
+**0.7.0** — navigation parity. Click any list row to select it;
+arrow keys (or j/k) navigate. S6 Peers and S2 Stamps gain
+their bee-tui drill panels (peer details / bucket histogram).
+Earlier capabilities — palette verbs (v0.5/v0.6), webhook +
 desktop notifications, GSOC + pubsub history, theme presets,
-prebuilt cargo-dist installers, the full `--once` surface —
-remain.
+cargo-dist installers, full `--once` surface — remain.
 
 | Screen | State |
 |---|---|
@@ -115,7 +114,9 @@ theme = "auto"        # auto | light | dark
 | `?` | Open the help overlay |
 | `Ctrl+L` | Toggle the bottom log pane |
 | `Ctrl+A` | Toggle the alerts popup |
-| `Esc` | Close any overlay |
+| `↑/↓` or `j/k` | Move selection in the active list |
+| `Enter` / click | Drill into the selected row |
+| `Esc` | Close any overlay or drill |
 | Click a tab | Same as `1`–`9` |
 
 ### `--once` verbs (no GUI)
