@@ -1,6 +1,6 @@
 [package]
 name = "beegui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Desktop GUI cockpit for Ethereum Swarm Bee node operators. Sibling of bee-tui — same cockpit logic via bee-cockpit-core, rendered with egui."
@@ -14,6 +14,7 @@ categories = ["gui"]
 [dependencies]
 bee-cockpit-core = "0.1"
 bee-rs = "1.6"
+clap = { version = "4.5", features = ["derive"] }
 color-eyre = "0.6"
 eframe = "0.29"
 egui = "0.29"

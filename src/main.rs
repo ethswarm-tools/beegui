@@ -11,33 +11,58 @@
 
 mod screens;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bee_cockpit_core::api::ApiClient;
-use bee_cockpit_core::config::NodeConfig;
+use bee_cockpit_core::config::{
+    Config, ConfigPaths, NodeConfig, load_raw, nodes_from_urls, normalize_url,
+};
 use bee_cockpit_core::watch::BeeWatch;
+use clap::Parser;
 use screens::{Screen, ScreenState};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
+const PATHS: ConfigPaths = ConfigPaths {
+    app_name: "beegui",
+    config_env: "BEEGUI_CONFIG",
+    data_env: "BEEGUI_DATA",
+};
+
 const DEFAULT_URL: &str = "http://localhost:1633";
+
+/// Desktop GUI cockpit for Ethereum Swarm Bee node operators.
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    /// Path to a config file. Falls back to the cross-platform
+    /// search path when omitted.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Bee node URL. Overrides the active node from config. Falls
+    /// back to $BEE_NODE_URL, then http://localhost:1633.
+    #[arg(long)]
+    node: Option<String>,
+    /// Optional bearer token. Overrides any token from config.
+    /// Also reads $BEE_NODE_TOKEN.
+    #[arg(long)]
+    token: Option<String>,
+    /// Ad-hoc node URLs (positional). When supplied, beegui ignores
+    /// the config's node list and uses these instead. Mirrors
+    /// bee-tui's positional-URL fleet flow.
+    urls: Vec<String>,
+}
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-
-    let url = std::env::var("BEE_NODE_URL").unwrap_or_else(|_| DEFAULT_URL.to_string());
+    let cli = Cli::parse();
+    let node = resolve_node(&cli)?;
 
     let runtime = Runtime::new()?;
     let cancel = CancellationToken::new();
+    let url = node.url.clone();
     let watch = {
-        let node = NodeConfig {
-            name: "default".into(),
-            url: url.clone(),
-            token: std::env::var("BEE_NODE_TOKEN").ok(),
-            log_file: None,
-            log_command: None,
-            default: true,
-        };
         let client = Arc::new(ApiClient::from_node(&node)?);
         let _guard = runtime.enter();
         BeeWatch::start(client, &cancel)
@@ -53,11 +78,63 @@ fn main() -> color_eyre::Result<()> {
     };
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([920.0, 640.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 680.0]),
         ..Default::default()
     };
     eframe::run_native("beegui", options, Box::new(|_cc| Ok(Box::new(app))))
         .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))
+}
+
+fn resolve_node(cli: &Cli) -> color_eyre::Result<NodeConfig> {
+    if let Some(url) = &cli.node {
+        return Ok(NodeConfig {
+            name: "cli".into(),
+            url: normalize_url(url),
+            token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+            log_file: None,
+            log_command: None,
+            default: true,
+        });
+    }
+    if !cli.urls.is_empty() {
+        return Ok(nodes_from_urls(&cli.urls).into_iter().next().unwrap());
+    }
+    if let Ok(url) = std::env::var("BEE_NODE_URL") {
+        return Ok(NodeConfig {
+            name: "env".into(),
+            url: normalize_url(&url),
+            token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+            log_file: None,
+            log_command: None,
+            default: true,
+        });
+    }
+
+    match load_raw::<Config>(&PATHS, cli.config.as_deref()) {
+        Ok(cfg) => {
+            if let Some(active) = cfg.active_node() {
+                let mut node = active.clone();
+                if let Some(t) = cli.token.clone() {
+                    node.token = Some(t);
+                }
+                return Ok(node);
+            }
+        }
+        Err(e) => {
+            if cli.config.is_some() {
+                return Err(color_eyre::eyre::eyre!("config: {e}"));
+            }
+        }
+    }
+
+    Ok(NodeConfig {
+        name: "default".into(),
+        url: DEFAULT_URL.to_string(),
+        token: cli.token.clone().or_else(|| std::env::var("BEE_NODE_TOKEN").ok()),
+        log_file: None,
+        log_command: None,
+        default: true,
+    })
 }
 
 struct App {
@@ -76,7 +153,7 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 for (i, screen) in Screen::all().into_iter().enumerate() {
                     let label = if i < 9 {
                         format!("{}  {}", i + 1, screen.label())
