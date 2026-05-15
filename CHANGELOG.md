@@ -11,6 +11,31 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.8.1] - 2026-05-15
+
+Documentation patch. The in-app help overlay and README "Keys"
+table had drifted: v0.7 and v0.8 keybindings landed in the code
+but weren't surfaced in the documentation operators see.
+
+### Fixed
+
+- **In-app help overlay** (`?`) — added rows for `↑ ↓` / `j k`,
+  `Enter` / click, `PgUp` / `PgDn`, `Home` / `End`, `r`
+  (fleet re-poll · lottery `rchash` bench), `c` (pins check
+  all), `s` (pin sort cycle). Previously the overlay listed
+  only the 7 v0.5-era keys.
+- **README "Keys" table** — same backfill so the GitHub
+  landing page matches the in-app overlay.
+
+### Added
+
+- **`docs/screenshots/`** scaffold with a capture recipe
+  (Linux Wayland / X11, macOS, Windows), framing tips, and
+  asset inventory. The README now references image placeholders
+  (`cold-start.png`, `s2-stamps.png`, `s6-peers.png`,
+  `s15-fleet.png`, `palette.png`); captures land in a future
+  commit.
+
 ## [0.8.0] - 2026-05-15
 
 The "switch active node" release. v0.7.1 left switching from

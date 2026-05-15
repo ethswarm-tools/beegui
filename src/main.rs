@@ -819,7 +819,14 @@ impl App {
                             ("Ctrl+L", "toggle bee::http log pane"),
                             ("Ctrl+A", "toggle alerts panel"),
                             ("?", "this help"),
-                            ("Esc", "close any overlay"),
+                            ("↑ ↓ / j k", "move selection in the active list"),
+                            ("Enter / click", "drill into the selected row"),
+                            ("PgUp / PgDn", "page selection ±10 rows"),
+                            ("Home / End", "first / last row"),
+                            ("r", "re-poll fleet (S15) · run rchash bench (S4)"),
+                            ("c", "check all pins (S10)"),
+                            ("s", "cycle pin sort mode (S10)"),
+                            ("Esc", "close any overlay or drill"),
                         ] {
                             ui.label(egui::RichText::new(*k).monospace());
                             ui.label(*v);

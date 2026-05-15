@@ -9,6 +9,8 @@ skip reasons, …) via the shared
 crate, rendered with [egui](https://github.com/emilk/egui) instead of
 ratatui.
 
+![beegui cold-start](docs/screenshots/cold-start.png)
+
 ## Why egui
 
 Same Rust, single static binary, no JavaScript / no Electron — matches
@@ -118,6 +120,11 @@ theme = "auto"        # auto | light | dark
 | `Ctrl+A` | Toggle the alerts popup |
 | `↑/↓` or `j/k` | Move selection in the active list |
 | `Enter` / click | Drill into the selected row |
+| `PgUp` / `PgDn` | Page selection ±10 rows |
+| `Home` / `End` | First / last row |
+| `r` | Re-poll fleet (S15) · run `rchash` bench (S4) |
+| `c` | Check all pins (S10) |
+| `s` | Cycle pin sort mode (S10) |
 | `Esc` | Close any overlay or drill |
 | Click a tab | Same as `1`–`9` |
 
@@ -139,6 +146,27 @@ Full verb list:
 `feed-probe`, `feed-timeline`, `grantees-list`,
 `buy-preview`, `buy-suggest`, `topup-preview`,
 `dilute-preview`, `extend-preview`, `plan-batch`.
+
+## Screens
+
+S2 Stamps — bucket-histogram drill on the selected batch:
+
+![S2 Stamps drill](docs/screenshots/s2-stamps.png)
+
+S6 Peers — bin strip + 6-endpoint drill on the selected peer:
+
+![S6 Peers drill](docs/screenshots/s6-peers.png)
+
+S15 Fleet — multi-node roll-up + switch active node with `Enter`:
+
+![S15 Fleet](docs/screenshots/s15-fleet.png)
+
+Command palette (`:` or `Ctrl+P`):
+
+![Command palette](docs/screenshots/palette.png)
+
+See [`docs/screenshots/`](docs/screenshots/) for the capture recipe
++ the full asset inventory.
 
 ## Building from source
 
