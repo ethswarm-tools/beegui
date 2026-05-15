@@ -12,9 +12,12 @@ keywords = ["swarm", "bee", "ethereum", "gui", "egui"]
 categories = ["gui"]
 
 [dependencies]
-# bee-cockpit-core = "0.1"           # uncomment once the core is published
+bee-cockpit-core = "0.1"
+color-eyre = "0.6"
 eframe = "0.29"
 egui = "0.29"
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync"] }
+tokio-util = "0.7"
 
 [[bin]]
 name = "beegui"
