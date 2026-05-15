@@ -19,15 +19,17 @@ cockpit logic.
 
 ## Status
 
-**0.10.0** — node switching from anywhere. `Ctrl+N` opens a
-centred picker (or `:nodes` in the palette); `:context <name>`
-switches by typed name. v0.9's external Bee log tailing
-(`--bee-log` / `--bee-log-cmd`, Linux `/proc` auto-discovery,
-tabbed bottom pane) remains; earlier capabilities — switch from
-Fleet (v0.8), `rchash` bench (v0.8), navigation parity (v0.7),
-palette verbs (v0.5/v0.6), webhook + desktop notifications, GSOC
-+ pubsub history, theme presets, cargo-dist installers, full
-`--once` surface — remain.
+**0.11.0** — Bee process supervision. `--bee-bin <path>` +
+`--bee-config <path>` (or `[bee]` in config) has beegui spawn
+and own a Bee instance for the session: rotating stdout/stderr
+capture, `/health` wait at startup, status chip in the bottom
+bar, clean SIGTERM-then-SIGKILL on quit. The supervisor's log
+file becomes the bee-log source automatically. Earlier features
+— `Ctrl+N` picker (v0.10), external Bee log tailing (v0.9),
+switch from Fleet (v0.8), `rchash` bench (v0.8), navigation
+parity (v0.7), palette verbs (v0.5/v0.6), webhook + desktop
+notifications, GSOC + pubsub history, theme presets, cargo-dist
+installers, full `--once` surface — remain.
 
 | Screen | State |
 |---|---|
@@ -76,6 +78,7 @@ beegui --theme light              # auto | light | dark
 beegui http://a:1633 http://b:1633  # positional URLs (ad-hoc fleet)
 beegui --bee-log /var/log/bee.log   # tail a Bee log file
 beegui --bee-log-cmd "journalctl -u bee -f"   # …or a command's stdout
+beegui --bee-bin ./bee --bee-config ./bee.yaml   # supervise Bee
 ```
 
 Environment overrides: `BEE_NODE_URL`, `BEE_NODE_TOKEN`,

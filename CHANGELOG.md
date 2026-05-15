@@ -11,6 +11,50 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.11.0] - 2026-05-16
+
+The "bee supervision" release. beegui catches up to bee-tui's
+oldest non-parity item: spawning + owning the Bee process for
+the session instead of connecting to one the operator started
+separately.
+
+### Added
+
+- **`--bee-bin <PATH>` + `--bee-config <PATH>` CLI flags.**
+  When both are set, beegui forks Bee as a child process,
+  redirects stdout+stderr to a rotating temp log, waits up to
+  60s for `/health` to return 200, then opens the cockpit.
+- **`[bee]` config block.** `bin` / `config` keys mirror the CLI
+  flags for persistent configuration; `[bee.logs]` controls the
+  rotating writer (default 64 MiB × 5 files). Partial config
+  (`bin` without `config`, or vice-versa) is a hard error so a
+  typo can't silently skip the spawn.
+- **Supervisor status chip** in the bottom status bar:
+  `● bee running` / `✕ bee exited (code N)` / `✕ bee killed
+  (signal N)`. Polled every frame; non-running states surface
+  in red so an OOM kill or crash is immediately visible without
+  opening the log pane.
+- **Auto-routed Bee logs.** When the supervisor is active its
+  rotating log file becomes the bee-log source automatically —
+  the bottom pane's Errors / Warn / Info / Debug / Bee HTTP
+  tabs are populated without any `--bee-log` flag. Source
+  origin shows as `[supervised]` in the pane header.
+- **Clean shutdown on quit.** `on_exit` SIGTERMs the process
+  group; 5-second grace; escalates to SIGKILL if Bee hasn't
+  exited. Bee's clean shutdown closes RocksDB cleanly so
+  recovery isn't needed on next start.
+
+### Notes
+
+- Auto-restart watchdog (bee-tui's `[bee.supervisor]
+  auto_restart = true`) is deferred — v0.11 always behaves as
+  if `auto_restart = false`: log the exit, dim the status chip,
+  no respawn. Operators restart beegui to retry.
+- When the supervisor is on, the v0.9 `--bee-log` /
+  `--bee-log-cmd` flags + auto-discovery are ignored for the
+  active node (the supervisor's log file is the freshest
+  source).
+
 ## [0.10.0] - 2026-05-15
 
 The "switch from anywhere" release. v0.8 made it possible to

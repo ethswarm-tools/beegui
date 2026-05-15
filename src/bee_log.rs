@@ -64,6 +64,10 @@ pub enum SourceOrigin {
     Cli,
     Config,
     Discovery,
+    /// Source is the file the in-process supervisor writes Bee's
+    /// stdout+stderr to. Highest-priority — picked whenever the
+    /// supervisor is active.
+    Supervisor,
 }
 
 impl SourceOrigin {
@@ -72,6 +76,7 @@ impl SourceOrigin {
             Self::Cli => "CLI",
             Self::Config => "config",
             Self::Discovery => "discovered",
+            Self::Supervisor => "supervised",
         }
     }
 }

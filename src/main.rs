@@ -25,7 +25,8 @@ use bee_cockpit_core::config::{
     Config, ConfigPaths, NodeConfig, load_raw, nodes_from_urls, normalize_url,
 };
 use bee_cockpit_core::fleet::{FleetSnapshot, spawn_poller};
-use bee_cockpit_core::config::{AlertsConfig, NotificationsConfig};
+use bee_cockpit_core::config::{AlertsConfig, BeeConfig, NotificationsConfig};
+use bee_cockpit_core::bee_supervisor::{BeeStatus, BeeSupervisor};
 use bee_cockpit_core::log_capture::{self, LogCapture};
 use bee_cockpit_core::views::health::gates_for_with_stamps;
 use bee_cockpit_core::watch::BeeWatch;
@@ -104,6 +105,18 @@ struct Cli {
     /// `[bee].log_command` from config.
     #[arg(long = "bee-log-cmd", value_name = "CMD")]
     bee_log_cmd: Option<String>,
+    /// Path to the `bee` binary. When set together with
+    /// `--bee-config`, beegui spawns Bee as a child process and
+    /// waits for it to come up before opening the cockpit. Bee's
+    /// stdout+stderr land in the bottom log pane automatically;
+    /// SIGTERM is sent at quit. Overrides `[bee].bin` from config.
+    #[arg(long = "bee-bin", value_name = "PATH")]
+    bee_bin: Option<PathBuf>,
+    /// Path to the Bee YAML config file to start with.
+    /// Required when `--bee-bin` is set unless `[bee].config` is
+    /// in the config file. Overrides `[bee].config`.
+    #[arg(long = "bee-config", value_name = "PATH")]
+    bee_config: Option<PathBuf>,
 }
 
 fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
@@ -118,12 +131,46 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         return Ok(code);
     }
 
-    let (resolved, alerts_cfg, notif_cfg, ui_theme) = resolve_nodes(&cli)?;
+    let resolved = resolve_nodes(&cli)?;
+    let alerts_cfg = resolved.alerts.clone();
+    let notif_cfg = resolved.notifications.clone();
+    let ui_theme = resolved.theme;
 
     let runtime = Runtime::new()?;
     let cancel = CancellationToken::new();
-    let active = resolved.active.clone();
+    let active = resolved.nodes.active.clone();
     let url = active.url.clone();
+
+    // Optional Bee process supervision. CLI flags win; otherwise
+    // pull from [bee] in the config. Both bin+config are required;
+    // partial config is a hard error so a typo doesn't silently
+    // skip the spawn.
+    let bee_bin_path = cli.bee_bin.clone().or_else(|| resolved.bee.as_ref().map(|b| b.bin.clone()));
+    let bee_config_path = cli.bee_config.clone().or_else(|| resolved.bee.as_ref().map(|b| b.config.clone()));
+    let bee_logs_cfg = resolved.bee.as_ref().map(|b| b.logs.clone()).unwrap_or_default();
+    let mut supervisor: Option<BeeSupervisor> = match (bee_bin_path, bee_config_path) {
+        (Some(bin), Some(cfg)) => {
+            eprintln!("beegui: spawning bee {bin:?} --config {cfg:?}");
+            let mut sup = BeeSupervisor::spawn(&bin, &cfg, bee_logs_cfg)?;
+            eprintln!(
+                "beegui: log → {} (will appear in the bottom log pane)",
+                sup.log_path().display()
+            );
+            eprintln!(
+                "beegui: waiting for {url} to respond on /health (up to 60s)..."
+            );
+            runtime.block_on(sup.wait_for_api(&url, Duration::from_secs(60)))?;
+            eprintln!("beegui: bee ready, opening cockpit");
+            Some(sup)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(color_eyre::eyre::eyre!(
+                "--bee-bin and --bee-config (or [bee].bin and [bee].config) must both be set"
+            ));
+        }
+        (None, None) => None,
+    };
+
     let api = Arc::new(ApiClient::from_node(&active)?);
     let watch_cancel = cancel.child_token();
     let watch = {
@@ -132,10 +179,10 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
     };
     let rt_handle = runtime.handle().clone();
     let rt_handle_clone = rt_handle.clone();
-    let (fleet_rx, fleet_resync) = if resolved.all.len() > 1 {
+    let (fleet_rx, fleet_resync) = if resolved.nodes.all.len() > 1 {
         let _guard = runtime.enter();
         let (rx, resync) = spawn_poller(
-            resolved.all.clone(),
+            resolved.nodes.all.clone(),
             cancel.child_token(),
             FLEET_POLL_INTERVAL,
         );
@@ -149,20 +196,32 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
     let mut bee_logs = bee_log::BeeLogs::new();
     {
         let _guard = runtime.enter();
-        let source = bee_log::resolve_source(
-            bee_log_cli_file.as_deref().and_then(|p| p.to_str()),
-            bee_log_cli_cmd.as_deref(),
-            &active,
-        );
+        // When the supervisor is active, its log file is the
+        // authoritative source — overrides CLI/config/discovery.
+        let source = if let Some(sup) = &supervisor {
+            bee_log::ResolvedSource::File {
+                path: sup.log_path().to_path_buf(),
+                origin: bee_log::SourceOrigin::Supervisor,
+            }
+        } else {
+            bee_log::resolve_source(
+                bee_log_cli_file.as_deref().and_then(|p| p.to_str()),
+                bee_log_cli_cmd.as_deref(),
+                &active,
+            )
+        };
         bee_logs.respawn(source, watch_cancel.clone());
     }
+    // Once the App owns the supervisor handle we transfer it; on quit
+    // the App's on_exit hook shuts it down.
+    let supervisor_handle = supervisor.take();
 
     let app = App {
         url,
         active_name: active.name,
         api,
         rt_handle,
-        nodes: resolved.all,
+        nodes: resolved.nodes.all,
         cancel: cancel.clone(),
         watch_cancel,
         watch,
@@ -174,6 +233,8 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         bee_logs,
         bee_log_cli_file,
         bee_log_cli_cmd,
+        supervisor: supervisor_handle,
+        bee_status: BeeStatus::Running,
         alerts_cfg: alerts_cfg.clone(),
         notif_cfg: notif_cfg.clone(),
         alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
@@ -241,9 +302,15 @@ fn default_visuals(ctx: &egui::Context) -> egui::Visuals {
     }
 }
 
-fn resolve_nodes(
-    cli: &Cli,
-) -> color_eyre::Result<(ResolvedNodes, AlertsConfig, NotificationsConfig, Theme)> {
+struct Resolved {
+    nodes: ResolvedNodes,
+    alerts: AlertsConfig,
+    notifications: NotificationsConfig,
+    theme: Theme,
+    bee: Option<BeeConfig>,
+}
+
+fn resolve_nodes(cli: &Cli) -> color_eyre::Result<Resolved> {
     let token_override = cli
         .token
         .clone()
@@ -272,6 +339,7 @@ fn resolve_nodes(
         .and_then(Theme::parse)
         .or_else(|| cfg.as_ref().and_then(|c| Theme::parse(&c.ui.theme)))
         .unwrap_or(Theme::Auto);
+    let bee = cfg.as_ref().and_then(|c| c.bee.clone());
 
     if let Some(url) = &cli.node {
         let node = NodeConfig {
@@ -282,15 +350,16 @@ fn resolve_nodes(
             log_command: None,
             default: true,
         };
-        return Ok((
-            ResolvedNodes {
+        return Ok(Resolved {
+            nodes: ResolvedNodes {
                 active: node.clone(),
                 all: vec![node],
             },
-            alerts_cfg,
-            notif_cfg,
+            alerts: alerts_cfg,
+            notifications: notif_cfg,
             theme,
-        ));
+            bee,
+        });
     }
     if !cli.urls.is_empty() {
         let mut all = nodes_from_urls(&cli.urls);
@@ -306,7 +375,13 @@ fn resolve_nodes(
             .find(|n| n.default)
             .cloned()
             .unwrap_or_else(|| all[0].clone());
-        return Ok((ResolvedNodes { active, all }, alerts_cfg, notif_cfg, theme));
+        return Ok(Resolved {
+            nodes: ResolvedNodes { active, all },
+            alerts: alerts_cfg,
+            notifications: notif_cfg,
+            theme,
+            bee,
+        });
     }
     if let Ok(url) = std::env::var("BEE_NODE_URL") {
         let node = NodeConfig {
@@ -317,15 +392,16 @@ fn resolve_nodes(
             log_command: None,
             default: true,
         };
-        return Ok((
-            ResolvedNodes {
+        return Ok(Resolved {
+            nodes: ResolvedNodes {
                 active: node.clone(),
                 all: vec![node],
             },
-            alerts_cfg,
-            notif_cfg,
+            alerts: alerts_cfg,
+            notifications: notif_cfg,
             theme,
-        ));
+            bee,
+        });
     }
 
     if let Some(c) = cfg.as_ref()
@@ -340,7 +416,13 @@ fn resolve_nodes(
             }
         }
         let active = c.active_node().cloned().unwrap_or_else(|| all[0].clone());
-        return Ok((ResolvedNodes { active, all }, alerts_cfg, notif_cfg, theme));
+        return Ok(Resolved {
+            nodes: ResolvedNodes { active, all },
+            alerts: alerts_cfg,
+            notifications: notif_cfg,
+            theme,
+            bee,
+        });
     }
 
     let node = NodeConfig {
@@ -351,15 +433,16 @@ fn resolve_nodes(
         log_command: None,
         default: true,
     };
-    Ok((
-        ResolvedNodes {
+    Ok(Resolved {
+        nodes: ResolvedNodes {
             active: node.clone(),
             all: vec![node],
         },
-        alerts_cfg,
-        notif_cfg,
+        alerts: alerts_cfg,
+        notifications: notif_cfg,
         theme,
-    ))
+        bee,
+    })
 }
 
 struct App {
@@ -379,6 +462,8 @@ struct App {
     bee_logs: bee_log::BeeLogs,
     bee_log_cli_file: Option<PathBuf>,
     bee_log_cli_cmd: Option<String>,
+    supervisor: Option<BeeSupervisor>,
+    bee_status: BeeStatus,
     alerts_cfg: AlertsConfig,
     notif_cfg: NotificationsConfig,
     alerts: alerts::AlertsPipeline,
@@ -400,6 +485,9 @@ impl eframe::App for App {
         self.observe_alerts();
         self.handle_dropped_files(ctx);
         self.bee_logs.drain();
+        if let Some(sup) = self.supervisor.as_mut() {
+            self.bee_status = sup.status();
+        }
         let pumped = self.palette.pump();
         for a in pumped {
             self.apply_palette_action(a, frame);
@@ -467,6 +555,15 @@ impl eframe::App for App {
                             .weak()
                             .small(),
                     );
+                    if self.supervisor.is_some() {
+                        let (label, color) = supervisor_chip(&self.bee_status);
+                        ui.label(
+                            egui::RichText::new(label)
+                                .color(color)
+                                .monospace()
+                                .small(),
+                        );
+                    }
                 });
             });
         });
@@ -586,6 +683,14 @@ impl eframe::App for App {
             && let Some(name) = out.switch_to_node
         {
             self.switch_active_node(&name);
+        }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(sup) = self.supervisor.take() {
+            eprintln!("beegui: SIGTERM → bee (5s grace, then SIGKILL)");
+            let status = self.rt_handle.block_on(sup.shutdown_default());
+            eprintln!("beegui: {}", status.label());
         }
     }
 }
@@ -1090,6 +1195,31 @@ fn draw_alert(ui: &mut egui::Ui, ta: &alerts::TimestampedAlert) {
         ui.label(egui::RichText::new(why).italics().weak().small());
     }
     ui.separator();
+}
+
+fn supervisor_chip(status: &BeeStatus) -> (String, egui::Color32) {
+    match status {
+        BeeStatus::Running => (
+            "● bee running".into(),
+            egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
+        ),
+        BeeStatus::Exited(0) => (
+            "○ bee exited (0)".into(),
+            egui::Color32::GRAY,
+        ),
+        BeeStatus::Exited(code) => (
+            format!("✕ bee exited ({code})"),
+            egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
+        ),
+        BeeStatus::Signaled(sig) => (
+            format!("✕ bee killed (sig {sig})"),
+            egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
+        ),
+        BeeStatus::UnknownExit(msg) => (
+            format!("✕ bee: {msg}"),
+            egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
+        ),
+    }
 }
 
 fn format_age(secs: u64) -> String {
