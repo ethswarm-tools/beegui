@@ -578,14 +578,17 @@ dependencies = [
 
 [[package]]
 name = "beegui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bee-cockpit-core",
  "bee-rs",
  "clap",
  "color-eyre",
+ "config",
  "eframe",
  "egui",
+ "serde",
+ "serde_json",
  "strum",
  "tokio",
  "tokio-util",

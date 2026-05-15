@@ -19,29 +19,29 @@ cockpit logic.
 
 ## Status
 
-**0.2.0** — first feature release. All 15 screens (S1–S15) are
-reachable from the tab bar; 10 of them stream live data via
-`BeeWatch`. The remaining 5 (Manifest, Watchlist, Feed Timeline,
-Pubsub, Fleet) ship placeholder UIs and gain their workers in
-v0.3.
+**0.3.0** — feature parity with bee-tui. All 15 screens stream
+live data, an in-app alerts panel surfaces gate transitions, a
+bottom pane tails `bee::http` traffic, and the full bee-tui
+`--once` CLI verb surface is reachable for shell pipelines /
+CI.
 
 | Screen | State |
 |---|---|
-| S1 Health | live — gates + Stamp TTL |
-| S2 Stamps | live — table + status |
-| S3 Swap | live — chequebook + cheques + settlements |
-| S4 Lottery | live — round + anchors + stake |
-| S5 Warmup | live — checklist + elapsed + progress bars |
-| S6 Peers | live — bin strip + peer table |
-| S7 Network | live — identity + reachability + underlays |
-| S8 API Health | live — chain + pending tx (call-stats pending log pane) |
-| S9 Tags | live — progress bars + counts |
-| S10 Pins | live — list (checks pending durability worker) |
-| S11 Manifest | placeholder — input + walker in v0.3 |
-| S12 Watchlist | placeholder — durability worker in v0.3 |
-| S13 Feed Timeline | placeholder — walker in v0.3 |
-| S14 Pubsub | placeholder — subscriber in v0.3 |
-| S15 Fleet | placeholder — multi-node poller in v0.3 |
+| S1 Health | gates + Stamp TTL |
+| S2 Stamps | table + status |
+| S3 Swap | chequebook + cheques + settlements |
+| S4 Lottery | round + anchors + stake |
+| S5 Warmup | checklist + elapsed + progress bars |
+| S6 Peers | bin strip + peer table |
+| S7 Network | identity + reachability + underlays |
+| S8 API Health | chain + pending tx + HTTP call-stats |
+| S9 Tags | progress + counts |
+| S10 Pins | list with check states |
+| S11 Manifest | paste root ref → lazy fork walker |
+| S12 Watchlist | per-ref durability worker + history |
+| S13 Feed Timeline | owner+topic walker |
+| S14 Pubsub | PSS subscriber + ring buffer + filter |
+| S15 Fleet | multi-node poller + aggregate roll-up |
 
 ## Install
 
@@ -86,7 +86,28 @@ token = "@env:BEE_TOKEN"
 |---|---|
 | `1`–`9` | Jump to that screen |
 | `Tab` / `Shift+Tab` | Cycle screens |
-| Click a tab | Same as above |
+| `Ctrl+L` | Toggle the bottom log pane |
+| `Ctrl+A` | Toggle the alerts popup |
+| Click a tab | Same as `1`–`9` |
+
+### `--once` verbs (no GUI)
+
+```sh
+beegui --once readiness --json http://localhost:1633
+beegui --once depth-table
+beegui --once hash ./somefile
+beegui --once durability-check <ref>
+beegui --once buy-preview --json
+```
+
+Full verb list:
+`hash`, `cid`, `depth-table`, `pss-target`, `gsoc-mine`,
+`readiness`, `version-check`, `check-version`,
+`config-doctor`, `price`, `basefee`, `inspect`,
+`durability-check`, `upload-file`, `upload-collection`,
+`feed-probe`, `feed-timeline`, `grantees-list`,
+`buy-preview`, `buy-suggest`, `topup-preview`,
+`dilute-preview`, `extend-preview`, `plan-batch`.
 
 ## Building from source
 

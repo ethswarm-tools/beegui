@@ -11,6 +11,65 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.3.0] - 2026-05-15
+
+The "feature parity" release. Every placeholder screen now ships a
+working worker, the bottom log pane streams `bee::http` traffic,
+gate transitions surface as in-app alerts, and the full bee-tui
+`--once` verb surface is reachable via CLI.
+
+### Added
+
+- **S11 Manifest** — paste a root reference + click *Load*.
+  `bee_cockpit_core::manifest_walker::load_node` fetches the root
+  chunk; clicking each `▶` lazily loads that fork's child node.
+- **S12 Watchlist** — add references one at a time + *Re-check
+  all* button. Each ref runs through
+  `bee_cockpit_core::durability::check`; results land in a
+  rolling 50-entry history rendered via
+  `views::watchlist::view_for`.
+- **S13 Feed Timeline** — owner + topic + max-entries inputs;
+  *Walk feed* spawns `feed_timeline::walk`; results render via
+  `views::feed_timeline::view_for`.
+- **S14 Pubsub** — topic input + *Subscribe (PSS)* button.
+  Spawns `pubsub::spawn_pss_watcher` with a cancellation token;
+  messages tail into a 200-entry ring with optional case-
+  insensitive substring filter.
+- **S15 Fleet** — when launched with multiple node URLs
+  (positional CLI or `[[nodes]]` in config), `fleet::spawn_poller`
+  is spawned; the screen renders the aggregate roll-up via
+  `views::fleet::view_for`. Single-node mode shows a nudge.
+- **Log pane.** Bottom panel toggleable via the status-bar
+  *Logs* button or **Ctrl+L**. Renders the same `bee::http`
+  events that drive S8 API Health's call-stats. Both pane and
+  S8 share one `LogCapture`.
+- **Alerts pipeline.** Each frame the App runs
+  `views::health::gates_for_with_stamps` and feeds the result
+  to `alerts::AlertState::diff_and_record`. Surfaced transitions
+  land in a 100-entry ring and appear in a popup (status-bar
+  *🔔 Alerts* button or **Ctrl+A**) with from→to, value, why,
+  age. Webhook firing is parity-pending — coming with a
+  `[alerts] webhook_url` config knob.
+- **`--once` CLI** — full bee-tui verb surface. `--once
+  readiness`, `hash <path>`, `cid <ref>`, `depth-table`,
+  `pss-target`, `gsoc-mine`, `version-check`,
+  `config-doctor`, `price`, `basefee`, `inspect`,
+  `durability-check`, `upload-file`, `upload-collection`,
+  `feed-probe`, `feed-timeline`, `grantees-list`,
+  `buy-preview`, `buy-suggest`, `topup-preview`,
+  `dilute-preview`, `extend-preview`, `plan-batch`. Pair with
+  `--json` for CI-friendly output.
+- **Logging.** beegui installs the `bee_cockpit_core::log_capture`
+  tracing layer at startup so the bottom pane and S8 are
+  populated.
+
+### Notes
+
+- 15/15 screens now render live data. The placeholder strip in
+  v0.2 is gone.
+- Theme/keybinding configuration and prebuilt installers (via
+  cargo-dist) remain on the roadmap for v0.4.
+
 ## [0.2.0] - 2026-05-15
 
 First feature release. beegui ships a working egui-based desktop

@@ -10,6 +10,7 @@
 //! [egui]: https://github.com/emilk/egui
 
 mod alerts;
+mod once;
 mod screens;
 
 use std::path::PathBuf;
@@ -51,7 +52,7 @@ fn init_logging() -> LogCapture {
     capture
 }
 
-const PATHS: ConfigPaths = ConfigPaths {
+pub(crate) const PATHS: ConfigPaths = ConfigPaths {
     app_name: "beegui",
     config_env: "BEEGUI_CONFIG",
     data_env: "BEEGUI_DATA",
@@ -75,16 +76,32 @@ struct Cli {
     /// Also reads $BEE_NODE_TOKEN.
     #[arg(long)]
     token: Option<String>,
+    /// Run a single verb and exit (no GUI). See `--once help`
+    /// for the verb list (parity with bee-tui).
+    #[arg(long)]
+    once: Option<String>,
+    /// Emit `--once` output as a JSON object instead of a
+    /// human-readable line.
+    #[arg(long)]
+    json: bool,
     /// Ad-hoc node URLs (positional). When supplied, beegui ignores
     /// the config's node list and uses these instead. Mirrors
     /// bee-tui's positional-URL fleet flow.
     urls: Vec<String>,
 }
 
-fn main() -> color_eyre::Result<()> {
+fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
     color_eyre::install()?;
     let cli = Cli::parse();
     let log_capture = init_logging();
+
+    if let Some(verb) = cli.once.clone() {
+        let rt = Runtime::new()?;
+        let args = cli.urls.clone();
+        let code = rt.block_on(once::run(&verb, &args, cli.json, cli.config.clone()));
+        return Ok(code);
+    }
+
     let resolved = resolve_nodes(&cli)?;
 
     let runtime = Runtime::new()?;
@@ -131,7 +148,8 @@ fn main() -> color_eyre::Result<()> {
         ..Default::default()
     };
     eframe::run_native("beegui", options, Box::new(|_cc| Ok(Box::new(app))))
-        .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))
+        .map_err(|e| color_eyre::eyre::eyre!("eframe: {e}"))?;
+    Ok(std::process::ExitCode::SUCCESS)
 }
 
 struct ResolvedNodes {
