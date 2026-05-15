@@ -1,0 +1,21 @@
+[package]
+name = "beegui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Desktop GUI cockpit for Ethereum Swarm Bee node operators. Sibling of bee-tui — same cockpit logic via bee-cockpit-core, rendered with egui."
+authors = ["Calin Martinconi <martinconic@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ethswarm-tools/beegui"
+readme = "README.md"
+keywords = ["swarm", "bee", "ethereum", "gui", "egui"]
+categories = ["gui"]
+
+[dependencies]
+# bee-cockpit-core = "0.1"           # uncomment once the core is published
+eframe = "0.29"
+egui = "0.29"
+
+[[bin]]
+name = "beegui"
+path = "src/main.rs"
