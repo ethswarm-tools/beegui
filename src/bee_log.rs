@@ -205,3 +205,215 @@ pub fn resolve_source(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bee_cockpit_core::bee_log::{BeeLogLine, LogTab};
+
+    fn mk_node() -> NodeConfig {
+        // Use a non-loopback URL so discovery falls through to
+        // NotApplicable deterministically — tests must not depend on
+        // /proc state of the host they're running on.
+        NodeConfig {
+            name: "test".into(),
+            url: "http://example.com:1633".into(),
+            token: None,
+            log_file: None,
+            log_command: None,
+            default: true,
+        }
+    }
+
+    #[test]
+    fn resolve_source_cli_file_wins_over_everything() {
+        let mut node = mk_node();
+        node.log_file = Some("/cfg/file.log".into());
+        node.log_command = Some("cfg-cmd".into());
+        let s = resolve_source(Some("/cli/file.log"), Some("cli-cmd"), &node);
+        match s {
+            ResolvedSource::File { path, origin } => {
+                assert_eq!(path, PathBuf::from("/cli/file.log"));
+                assert_eq!(origin, SourceOrigin::Cli);
+            }
+            other => panic!("expected CLI File, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_source_cli_cmd_wins_when_no_cli_file() {
+        let mut node = mk_node();
+        node.log_file = Some("/cfg/file.log".into());
+        node.log_command = Some("cfg-cmd".into());
+        let s = resolve_source(None, Some("cli-cmd"), &node);
+        match s {
+            ResolvedSource::Command { command, origin } => {
+                assert_eq!(command, "cli-cmd");
+                assert_eq!(origin, SourceOrigin::Cli);
+            }
+            other => panic!("expected CLI Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_source_config_file_wins_when_no_cli() {
+        let mut node = mk_node();
+        node.log_file = Some("/cfg/file.log".into());
+        node.log_command = Some("cfg-cmd".into());
+        let s = resolve_source(None, None, &node);
+        match s {
+            ResolvedSource::File { path, origin } => {
+                assert_eq!(path, PathBuf::from("/cfg/file.log"));
+                assert_eq!(origin, SourceOrigin::Config);
+            }
+            other => panic!("expected Config File, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_source_config_cmd_when_no_config_file() {
+        let mut node = mk_node();
+        node.log_command = Some("cfg-cmd".into());
+        let s = resolve_source(None, None, &node);
+        match s {
+            ResolvedSource::Command { command, origin } => {
+                assert_eq!(command, "cfg-cmd");
+                assert_eq!(origin, SourceOrigin::Config);
+            }
+            other => panic!("expected Config Command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_source_falls_through_to_none_for_remote_url() {
+        let node = mk_node();
+        let s = resolve_source(None, None, &node);
+        match s {
+            ResolvedSource::None { reason } => {
+                assert!(reason.contains("auto-discovery") || reason.contains("--bee-log"));
+            }
+            other => panic!("expected None for remote URL, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn source_origin_labels_are_short() {
+        for origin in [
+            SourceOrigin::Cli,
+            SourceOrigin::Config,
+            SourceOrigin::Discovery,
+            SourceOrigin::Supervisor,
+        ] {
+            assert!(!origin.label().is_empty());
+            assert!(origin.label().len() < 16);
+        }
+    }
+
+    #[test]
+    fn ring_index_routes_severity_tabs() {
+        assert_eq!(ring_index(LogTab::Errors), Some(0));
+        assert_eq!(ring_index(LogTab::Warning), Some(1));
+        assert_eq!(ring_index(LogTab::Info), Some(2));
+        assert_eq!(ring_index(LogTab::Debug), Some(3));
+        assert_eq!(ring_index(LogTab::BeeHttp), Some(4));
+    }
+
+    #[test]
+    fn ring_index_skips_self_http_and_cockpit() {
+        // SelfHttp and Cockpit have their own capture handles —
+        // not part of BeeLogs' rings.
+        assert_eq!(ring_index(LogTab::SelfHttp), None);
+        assert_eq!(ring_index(LogTab::Cockpit), None);
+    }
+
+    fn mk_line(msg: &str) -> BeeLogLine {
+        BeeLogLine {
+            timestamp: "2026-05-16 10:00:00.000".into(),
+            logger: "node/test".into(),
+            message: msg.into(),
+        }
+    }
+
+    #[test]
+    fn beelogs_drain_routes_lines_to_correct_ring() {
+        let mut bl = BeeLogs::new();
+        let tx = bl.tx.clone();
+        tx.send((LogTab::Errors, mk_line("e1"))).unwrap();
+        tx.send((LogTab::Info, mk_line("i1"))).unwrap();
+        tx.send((LogTab::Info, mk_line("i2"))).unwrap();
+        // SelfHttp/Cockpit lines must be silently dropped (they have
+        // their own handles, not this ring).
+        tx.send((LogTab::SelfHttp, mk_line("ignored"))).unwrap();
+        bl.drain();
+        assert_eq!(bl.snapshot(LogTab::Errors).len(), 1);
+        assert_eq!(bl.snapshot(LogTab::Info).len(), 2);
+        assert_eq!(bl.snapshot(LogTab::SelfHttp).len(), 0);
+        assert_eq!(bl.snapshot(LogTab::Debug).len(), 0);
+    }
+
+    #[test]
+    fn beelogs_ring_evicts_oldest_at_capacity() {
+        let mut bl = BeeLogs::new();
+        let tx = bl.tx.clone();
+        for i in 0..(RING_CAPACITY + 5) {
+            tx.send((LogTab::Info, mk_line(&format!("line-{i}")))).unwrap();
+        }
+        bl.drain();
+        let ring = bl.snapshot(LogTab::Info);
+        assert_eq!(ring.len(), RING_CAPACITY);
+        // First retained line should be the 6th (0..5 evicted).
+        assert_eq!(ring.front().unwrap().message, "line-5");
+        assert_eq!(
+            ring.back().unwrap().message,
+            format!("line-{}", RING_CAPACITY + 4)
+        );
+    }
+
+    #[test]
+    fn beelogs_respawn_clears_rings() {
+        let mut bl = BeeLogs::new();
+        let tx = bl.tx.clone();
+        tx.send((LogTab::Errors, mk_line("stale"))).unwrap();
+        bl.drain();
+        assert_eq!(bl.snapshot(LogTab::Errors).len(), 1);
+        bl.respawn(
+            ResolvedSource::None {
+                reason: "test".into(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        assert_eq!(bl.snapshot(LogTab::Errors).len(), 0);
+    }
+
+    #[test]
+    fn beelogs_respawn_updates_source_label_for_none() {
+        // None doesn't spawn a tailer so this test stays sync-only.
+        let mut bl = BeeLogs::new();
+        bl.respawn(
+            ResolvedSource::None {
+                reason: "x".into(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        assert!(matches!(bl.source, ResolvedSource::None { .. }));
+    }
+
+    #[tokio::test]
+    async fn beelogs_respawn_with_file_updates_source_label() {
+        // File source spawns a tailer; needs a tokio runtime.
+        let mut bl = BeeLogs::new();
+        bl.respawn(
+            ResolvedSource::File {
+                path: PathBuf::from("/nonexistent/x.log"),
+                origin: SourceOrigin::Supervisor,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        match &bl.source {
+            ResolvedSource::File { origin, .. } => {
+                assert_eq!(*origin, SourceOrigin::Supervisor);
+            }
+            _ => panic!("source not updated"),
+        }
+    }
+}

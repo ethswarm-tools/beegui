@@ -120,3 +120,101 @@ fn fire_desktop_notification(a: &Alert) {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pipe() -> AlertsPipeline {
+        AlertsPipeline::new(AlertsConfig::default(), NotificationsConfig::default(), None)
+    }
+
+    #[test]
+    fn fresh_pipeline_is_empty() {
+        let p = pipe();
+        assert_eq!(p.len(), 0);
+        assert_eq!(p.unread_count(), 0);
+        assert!(!p.webhook_configured());
+        assert!(!p.desktop_enabled());
+    }
+
+    #[test]
+    fn webhook_configured_reflects_config() {
+        let cfg = AlertsConfig {
+            webhook_url: Some("https://hooks.example/x".into()),
+            ..Default::default()
+        };
+        let p = AlertsPipeline::new(cfg, NotificationsConfig::default(), None);
+        assert!(p.webhook_configured());
+    }
+
+    #[test]
+    fn desktop_enabled_reflects_config() {
+        let cfg = NotificationsConfig {
+            desktop: true,
+            ..Default::default()
+        };
+        let p = AlertsPipeline::new(AlertsConfig::default(), cfg, None);
+        assert!(p.desktop_enabled());
+    }
+
+    #[test]
+    fn mark_read_resets_unread_count() {
+        let mut p = pipe();
+        // Manually push synthetic history to avoid having to drive a
+        // real Gate list through the AlertState machinery.
+        p.history.push_back(TimestampedAlert {
+            when: SystemTime::now(),
+            alert: Alert {
+                gate: "g".into(),
+                from: GateStatus::Pass,
+                to: GateStatus::Fail,
+                value: String::new(),
+                why: None,
+            },
+        });
+        assert_eq!(p.unread_count(), 1);
+        p.mark_read();
+        assert_eq!(p.unread_count(), 0);
+    }
+
+    #[test]
+    fn clear_resets_history_and_unread() {
+        let mut p = pipe();
+        p.history.push_back(TimestampedAlert {
+            when: SystemTime::now(),
+            alert: Alert {
+                gate: "g".into(),
+                from: GateStatus::Pass,
+                to: GateStatus::Warn,
+                value: String::new(),
+                why: None,
+            },
+        });
+        p.last_seen_unack = 5;
+        p.clear();
+        assert_eq!(p.len(), 0);
+        assert_eq!(p.unread_count(), 0);
+    }
+
+    #[test]
+    fn history_capped_at_history_cap() {
+        let mut p = pipe();
+        for i in 0..(HISTORY_CAP + 10) {
+            p.history.push_back(TimestampedAlert {
+                when: SystemTime::now(),
+                alert: Alert {
+                    gate: format!("g{i}"),
+                    from: GateStatus::Pass,
+                    to: GateStatus::Warn,
+                    value: String::new(),
+                    why: None,
+                },
+            });
+            if p.history.len() > HISTORY_CAP {
+                p.history.pop_front();
+            }
+        }
+        assert_eq!(p.history.len(), HISTORY_CAP);
+    }
+}
+

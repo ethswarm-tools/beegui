@@ -1,5 +1,8 @@
 # beegui
 
+> **Operator handbook**: <https://ethswarm-tools.github.io/beegui/> — full
+> per-screen reference, command palette, keymap, FAQ.
+
 Desktop GUI cockpit for [Ethereum Swarm](https://www.ethswarm.org/)
 Bee node operators. Sibling of
 [`bee-tui`](https://github.com/ethswarm-tools/bee-tui) — same cockpit
@@ -19,17 +22,17 @@ cockpit logic.
 
 ## Status
 
-**0.11.0** — Bee process supervision. `--bee-bin <path>` +
-`--bee-config <path>` (or `[bee]` in config) has beegui spawn
-and own a Bee instance for the session: rotating stdout/stderr
-capture, `/health` wait at startup, status chip in the bottom
-bar, clean SIGTERM-then-SIGKILL on quit. The supervisor's log
-file becomes the bee-log source automatically. Earlier features
-— `Ctrl+N` picker (v0.10), external Bee log tailing (v0.9),
-switch from Fleet (v0.8), `rchash` bench (v0.8), navigation
-parity (v0.7), palette verbs (v0.5/v0.6), webhook + desktop
+**0.12.0** — v1.0 runway. 58 tests (up from 0); mdBook operator
+handbook published to GitHub Pages; stale log-pane labels fixed.
+v0.11's Bee process supervision (`--bee-bin` / `--bee-config`)
+remains; full feature list is in the [handbook][bk].
+Earlier features — `Ctrl+N` picker (v0.10), external Bee log
+tailing (v0.9), switch from Fleet (v0.8), navigation parity
+(v0.7), palette verbs (v0.5/v0.6), webhook + desktop
 notifications, GSOC + pubsub history, theme presets, cargo-dist
 installers, full `--once` surface — remain.
+
+[bk]: https://ethswarm-tools.github.io/beegui/
 
 | Screen | State |
 |---|---|

@@ -518,7 +518,7 @@ impl eframe::App for App {
                 let arrow = if self.log_pane_open { "▼" } else { "▲" };
                 if ui
                     .button(format!("{arrow} Logs"))
-                    .on_hover_text("Toggle bee::http log pane (Ctrl+L)")
+                    .on_hover_text("Toggle the bottom log pane (Ctrl+L)")
                     .clicked()
                 {
                     self.log_pane_open = !self.log_pane_open;
@@ -989,7 +989,7 @@ impl App {
                             ("1–9", "switch screen"),
                             ("Tab / Shift+Tab", "cycle screens"),
                             (": / Ctrl+P", "open command palette"),
-                            ("Ctrl+L", "toggle bee::http log pane"),
+                            ("Ctrl+L", "toggle the bottom log pane (7 tabs)"),
                             ("Ctrl+A", "toggle alerts panel"),
                             ("Ctrl+N", "open node picker (switch active node)"),
                             ("?", "this help"),
@@ -1376,5 +1376,77 @@ fn draw_bee_log_tab(
             ui.label(egui::RichText::new(&line.logger).monospace().weak());
             ui.label(egui::RichText::new(&line.message).monospace());
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_parse_accepts_canonical_names() {
+        assert!(matches!(Theme::parse("auto"), Some(Theme::Auto)));
+        assert!(matches!(Theme::parse("light"), Some(Theme::Light)));
+        assert!(matches!(Theme::parse("dark"), Some(Theme::Dark)));
+    }
+
+    #[test]
+    fn theme_parse_case_insensitive_and_aliases() {
+        assert!(matches!(Theme::parse("AUTO"), Some(Theme::Auto)));
+        assert!(matches!(Theme::parse("Light"), Some(Theme::Light)));
+        assert!(matches!(Theme::parse("default"), Some(Theme::Auto)));
+        assert!(matches!(Theme::parse("mono"), Some(Theme::Dark)));
+    }
+
+    #[test]
+    fn theme_parse_rejects_unknown() {
+        assert!(Theme::parse("rainbow").is_none());
+        assert!(Theme::parse("").is_none());
+    }
+
+    #[test]
+    fn format_age_buckets_seconds_minutes_hours() {
+        assert_eq!(format_age(0), "0s ago");
+        assert_eq!(format_age(59), "59s ago");
+        assert_eq!(format_age(60), "1m ago");
+        assert_eq!(format_age(3599), "59m ago");
+        assert_eq!(format_age(3600), "1h ago");
+        assert_eq!(format_age(7200), "2h ago");
+    }
+
+    #[test]
+    fn supervisor_chip_running_is_green() {
+        let (label, color) = supervisor_chip(&BeeStatus::Running);
+        assert!(label.contains("running"));
+        assert_eq!(color, egui::Color32::from_rgb(0x4a, 0xc0, 0x4a));
+    }
+
+    #[test]
+    fn supervisor_chip_clean_exit_is_grey() {
+        let (label, color) = supervisor_chip(&BeeStatus::Exited(0));
+        assert!(label.contains("0"));
+        assert_eq!(color, egui::Color32::GRAY);
+    }
+
+    #[test]
+    fn supervisor_chip_nonzero_exit_is_red() {
+        let (label, color) = supervisor_chip(&BeeStatus::Exited(137));
+        assert!(label.contains("137"));
+        assert_eq!(color, egui::Color32::from_rgb(0xd0, 0x4a, 0x4a));
+    }
+
+    #[test]
+    fn supervisor_chip_signaled_is_red() {
+        let (label, color) = supervisor_chip(&BeeStatus::Signaled(9));
+        assert!(label.contains("9"));
+        assert_eq!(color, egui::Color32::from_rgb(0xd0, 0x4a, 0x4a));
+    }
+
+    #[test]
+    fn supervisor_chip_unknown_exit_is_red() {
+        let (label, color) =
+            supervisor_chip(&BeeStatus::UnknownExit("waitpid: ECHILD".into()));
+        assert!(label.contains("waitpid"));
+        assert_eq!(color, egui::Color32::from_rgb(0xd0, 0x4a, 0x4a));
     }
 }

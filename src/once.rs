@@ -1351,7 +1351,7 @@ mod tests {
 
     #[test]
     fn ok_helpers_compose_the_expected_shape() {
-        let r = OnceResult::ok("v", "all good");
+        let r = OnceResult::ok_with_data("v", "all good", serde_json::Value::Null);
         assert_eq!(r.verb, "v");
         assert!(matches!(r.status, OnceStatus::Ok));
         assert_eq!(r.message, "all good");
@@ -1366,7 +1366,7 @@ mod tests {
     fn print_result_json_output_is_one_line() {
         // Smoke test the JSON path doesn't panic. We don't capture
         // stdout here — that's an integration concern.
-        let r = OnceResult::ok("hash", "hash X: abc");
+        let r = OnceResult::ok_with_data("hash", "hash X: abc", serde_json::Value::Null);
         print_result(&r, true);
         print_result(&r, false);
     }

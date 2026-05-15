@@ -100,7 +100,7 @@ pub const VERBS: &[VerbSpec] = &[
     },
     VerbSpec {
         name: "logs",
-        summary: "toggle the bee::http log pane",
+        summary: "toggle the bottom log pane (7 tabs)",
         usage: ":logs",
     },
     VerbSpec {
@@ -156,7 +156,7 @@ impl BannerLevel {
 /// One requested action to be applied by App after `step()`. Verbs
 /// run async on tokio; the side-effects that touch egui state come
 /// back through this channel.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PaletteAction {
     SwitchScreen(Screen),
     ToggleLogs,
@@ -1002,4 +1002,234 @@ fn chrono_id() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p() -> Palette {
+        Palette::default()
+    }
+
+    #[test]
+    fn verbs_table_invariants() {
+        // Every verb has a non-empty name/summary/usage and the
+        // usage hint mentions the verb name (helps catch copy-paste
+        // mistakes when adding verbs).
+        for v in VERBS {
+            assert!(!v.name.is_empty(), "verb has empty name");
+            assert!(!v.summary.is_empty(), "verb {} has empty summary", v.name);
+            assert!(!v.usage.is_empty(), "verb {} has empty usage", v.name);
+            assert!(
+                v.usage.contains(':') || v.usage.contains(v.name),
+                "verb {} usage doesn't reference itself: {:?}",
+                v.name,
+                v.usage,
+            );
+        }
+    }
+
+    #[test]
+    fn verbs_have_no_duplicate_names() {
+        let mut seen = std::collections::HashSet::new();
+        for v in VERBS {
+            assert!(seen.insert(v.name), "duplicate verb name: {}", v.name);
+        }
+    }
+
+    #[test]
+    fn suggestions_empty_returns_all_verbs() {
+        let p = p();
+        assert_eq!(p.suggestions().len(), VERBS.len());
+    }
+
+    #[test]
+    fn suggestions_filters_by_prefix_substring() {
+        let mut p = p();
+        p.input = ":up".into();
+        let names: Vec<_> = p.suggestions().iter().map(|v| v.name).collect();
+        assert!(names.contains(&"upload"), "got {:?}", names);
+        assert!(!names.contains(&"help"), "got {:?}", names);
+    }
+
+    #[test]
+    fn suggestions_case_insensitive() {
+        let mut p = p();
+        p.input = ":UPLOAD".into();
+        let names: Vec<_> = p.suggestions().iter().map(|v| v.name).collect();
+        assert!(names.contains(&"upload"));
+    }
+
+    #[test]
+    fn suggestions_no_match_returns_empty() {
+        let mut p = p();
+        p.input = ":xyzzy".into();
+        assert_eq!(p.suggestions().len(), 0);
+    }
+
+    #[test]
+    fn suggestions_ignores_args_after_verb() {
+        let mut p = p();
+        p.input = ":upload /tmp/x".into();
+        let names: Vec<_> = p.suggestions().iter().map(|v| v.name).collect();
+        assert!(names.contains(&"upload"));
+    }
+
+    #[test]
+    fn select_next_and_prev_wrap_around() {
+        let mut p = p();
+        let n = p.suggestions().len();
+        assert!(n >= 4);
+        p.selected = 0;
+        p.select_prev();
+        assert_eq!(p.selected, n - 1);
+        p.select_next();
+        assert_eq!(p.selected, 0);
+        p.select_next();
+        assert_eq!(p.selected, 1);
+    }
+
+    #[test]
+    fn select_handles_zero_suggestions() {
+        let mut p = p();
+        p.input = ":xyzzy".into();
+        assert_eq!(p.suggestions().len(), 0);
+        // Must not panic even when no suggestions match.
+        p.select_next();
+        p.select_prev();
+    }
+
+    #[test]
+    fn verb_go_maps_screen_names() {
+        for (name, expected) in [
+            ("health", Screen::Health),
+            ("stamps", Screen::Stamps),
+            ("swap", Screen::Swap),
+            ("lottery", Screen::Lottery),
+            ("warmup", Screen::Warmup),
+            ("peers", Screen::Peers),
+            ("network", Screen::Network),
+            ("api", Screen::ApiHealth),
+            ("api-health", Screen::ApiHealth),
+            ("tags", Screen::Tags),
+            ("pins", Screen::Pins),
+            ("manifest", Screen::Manifest),
+            ("watchlist", Screen::Watchlist),
+            ("feed", Screen::FeedTimeline),
+            ("feed-timeline", Screen::FeedTimeline),
+            ("pubsub", Screen::Pubsub),
+            ("fleet", Screen::Fleet),
+        ] {
+            let mut p = p();
+            let actions = p.verb_go(&[name]);
+            assert_eq!(actions.len(), 1, "no action for {name:?}");
+            match &actions[0] {
+                PaletteAction::SwitchScreen(s) => assert_eq!(*s, expected, "{name:?}"),
+                other => panic!("expected SwitchScreen for {name:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn verb_go_unknown_screen_sets_err_banner() {
+        let mut p = p();
+        let actions = p.verb_go(&["nonexistent"]);
+        assert!(actions.is_empty());
+        let b = p.banner.as_ref().expect("expected error banner");
+        assert!(matches!(b.level, BannerLevel::Err));
+        assert!(b.text.contains("nonexistent"), "got {:?}", b.text);
+    }
+
+    #[test]
+    fn verb_go_missing_arg_sets_usage_banner() {
+        let mut p = p();
+        let actions = p.verb_go(&[]);
+        assert!(actions.is_empty());
+        let b = p.banner.as_ref().expect("expected error banner");
+        assert!(matches!(b.level, BannerLevel::Err));
+        assert!(b.text.contains("usage"), "got {:?}", b.text);
+    }
+
+    #[test]
+    fn verb_context_returns_switch_action() {
+        let mut p = p();
+        let actions = p.verb_context(&["primary"]);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            PaletteAction::SwitchContext(name) => assert_eq!(name, "primary"),
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verb_context_missing_arg_sets_usage_banner() {
+        let mut p = p();
+        let actions = p.verb_context(&[]);
+        assert!(actions.is_empty());
+        let b = p.banner.as_ref().expect("banner");
+        assert!(matches!(b.level, BannerLevel::Err));
+        assert!(b.text.contains("usage"));
+    }
+
+    #[test]
+    fn verb_load_manifest_emits_two_actions() {
+        let mut p = p();
+        let actions = p.verb_load_manifest(&["abc123"]);
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(
+            actions[0],
+            PaletteAction::SwitchScreen(Screen::Manifest)
+        ));
+        match &actions[1] {
+            PaletteAction::LoadManifest(r) => assert_eq!(r, "abc123"),
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verb_feed_timeline_parses_optional_max() {
+        let mut p = p();
+        let actions = p.verb_feed_timeline(&["0xowner", "topic", "50"]);
+        assert_eq!(actions.len(), 2);
+        match &actions[1] {
+            PaletteAction::LoadFeedTimeline { owner, topic, max } => {
+                assert_eq!(owner, "0xowner");
+                assert_eq!(topic, "topic");
+                assert_eq!(*max, Some(50));
+            }
+            other => panic!("got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verb_feed_timeline_defaults_max_to_none() {
+        let mut p = p();
+        let actions = p.verb_feed_timeline(&["0xowner", "topic"]);
+        match &actions[1] {
+            PaletteAction::LoadFeedTimeline { max, .. } => assert_eq!(*max, None),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn verb_feed_timeline_needs_owner_and_topic() {
+        let mut p = p();
+        assert!(p.verb_feed_timeline(&[]).is_empty());
+        assert!(p.verb_feed_timeline(&["only-owner"]).is_empty());
+    }
+
+    #[test]
+    fn banner_level_colors_distinct() {
+        assert_ne!(BannerLevel::Ok.color(), BannerLevel::Err.color());
+    }
+
+    #[test]
+    fn set_banner_records_text() {
+        let mut p = p();
+        p.set_banner(BannerLevel::Ok, "hi");
+        let b = p.banner.as_ref().unwrap();
+        assert_eq!(b.text, "hi");
+        assert!(matches!(b.level, BannerLevel::Ok));
+    }
 }

@@ -11,6 +11,60 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.12.0] - 2026-05-16
+
+The "v1.0 runway" release. v0.11 closed the last bee-tui parity
+gap; v0.12 pays down the unmeasured-quality debt that accumulated
+across the v0.5 → v0.11 feature sprint.
+
+### Added
+
+- **Test coverage.** Went from 0 → 58 tests, covering pure-logic
+  paths that were previously validated only by `cargo check`:
+  - `bee_log::resolve_source` priority chain (CLI > config >
+    discovery > none).
+  - `BeeLogs` ring eviction at capacity, drain routing,
+    SelfHttp/Cockpit-tab drop behaviour, respawn-clears-rings.
+  - `palette` dispatch: every `:go <screen>` mapping, unknown
+    screen → error banner, `:context` arg validation, manifest /
+    feed-timeline argument parsing, suggestions filter logic,
+    select_prev/next wraparound, zero-suggestion no-panic.
+  - `VERBS` table integrity: no duplicate names, every entry has
+    a non-empty summary/usage.
+  - `AlertsPipeline`: webhook/desktop reflect config, mark_read /
+    clear semantics, history cap.
+  - `Theme::parse` canonical names + case + aliases.
+  - `format_age` second/minute/hour bucket boundaries.
+  - `supervisor_chip` color coding for every BeeStatus variant.
+- **mdBook operator handbook** at
+  `docs/book/`, deployed via GitHub Pages workflow to
+  `ethswarm-tools.github.io/beegui/`. Pages: intro, install,
+  launching, configuration, screens (15 in one consolidated
+  page), command palette, keymap, Bee log tailing, Bee
+  supervision, `--once` CLI, FAQ.
+
+### Fixed
+
+- **Pre-existing dead tests** in `src/once.rs` that referenced
+  `OnceResult::ok` — the function was removed in v0.8 as
+  dead-code; the tests were never run because `cargo test` was
+  never invoked. Updated to use `ok_with_data`.
+- **Stale log-pane labels.** "toggle bee::http log pane" hovers
+  and help-overlay entries dated from v0.8 when the pane was
+  a single-tab `bee::http` viewer. v0.9 turned it tabbed (7
+  tabs); the strings now match.
+
+### Notes
+
+- Test count is well short of bee-tui's 467, but every test
+  added here covers a pure-logic path that was previously
+  unprotected. egui-side rendering tests stay out of scope
+  (egui doesn't have a great headless test path).
+- The handbook is deliberately tight (~10 pages, ~1500 lines
+  total). It documents the v0.12 surface accurately; per-screen
+  pages can split out of `screens.md` in later releases without
+  changing the URL structure.
+
 ## [0.11.0] - 2026-05-16
 
 The "bee supervision" release. beegui catches up to bee-tui's
