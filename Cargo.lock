@@ -531,6 +531,7 @@ name = "beegui"
 version = "0.1.0"
 dependencies = [
  "bee-cockpit-core",
+ "bee-rs",
  "color-eyre",
  "eframe",
  "egui",

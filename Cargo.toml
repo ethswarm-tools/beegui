@@ -13,6 +13,7 @@ categories = ["gui"]
 
 [dependencies]
 bee-cockpit-core = "0.1"
+bee-rs = "1.6"
 color-eyre = "0.6"
 eframe = "0.29"
 egui = "0.29"

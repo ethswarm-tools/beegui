@@ -77,8 +77,12 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                for screen in Screen::all() {
-                    let label = format!("{}  {}", screen.shortcut(), screen.label());
+                for (i, screen) in Screen::all().into_iter().enumerate() {
+                    let label = if i < 9 {
+                        format!("{}  {}", i + 1, screen.label())
+                    } else {
+                        screen.label().to_string()
+                    };
                     let selected = self.screen == screen;
                     if ui.selectable_label(selected, label).clicked() {
                         self.screen = screen;
@@ -103,7 +107,7 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            screens::draw(self.screen, ui, &self.watch, &mut self.state);
+            screens::draw(self.screen, ui, &self.watch, &mut self.state, &self.url);
         });
     }
 }
