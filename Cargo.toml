@@ -16,6 +16,7 @@ bee-cockpit-core = "0.1"
 color-eyre = "0.6"
 eframe = "0.29"
 egui = "0.29"
+strum = { version = "0.26", features = ["derive"] }
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync"] }
 tokio-util = "0.7"
 

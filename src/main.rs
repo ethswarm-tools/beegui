@@ -2,25 +2,21 @@
 //!
 //! Sibling of [bee-tui]. The cockpit logic — health gates, stamp
 //! warnings, fleet roll-up, redistribution skip reasons — lives in
-//! [bee-cockpit-core]; this crate just renders it with [egui] instead
-//! of ratatui.
-//!
-//! v0.1: scaffold + first screen (S1 Health). Boots a tokio runtime
-//! alongside eframe, starts a [`BeeWatch`] hub against
-//! `$BEE_NODE_URL` (default `http://localhost:1633`), and renders the
-//! same gate list bee-tui's S1 produces — via the same
-//! `gates_for_with_stamps` function from core.
+//! [bee-cockpit-core]; this crate renders it with [egui] instead of
+//! ratatui.
 //!
 //! [bee-tui]: https://github.com/ethswarm-tools/bee-tui
 //! [bee-cockpit-core]: https://github.com/ethswarm-tools/bee-cockpit-core
 //! [egui]: https://github.com/emilk/egui
 
+mod screens;
+
 use std::sync::Arc;
 
 use bee_cockpit_core::api::ApiClient;
 use bee_cockpit_core::config::NodeConfig;
-use bee_cockpit_core::views::health::{Gate, GateStatus, gates_for_with_stamps};
 use bee_cockpit_core::watch::BeeWatch;
+use screens::{Screen, ScreenState};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
 
@@ -50,12 +46,14 @@ fn main() -> color_eyre::Result<()> {
     let app = App {
         url,
         watch,
+        screen: Screen::Health,
+        state: ScreenState::default(),
         _runtime: runtime,
         _cancel: cancel,
     };
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([720.0, 540.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([920.0, 640.0]),
         ..Default::default()
     };
     eframe::run_native("beegui", options, Box::new(|_cc| Ok(Box::new(app))))
@@ -65,6 +63,8 @@ fn main() -> color_eyre::Result<()> {
 struct App {
     url: String,
     watch: BeeWatch,
+    screen: Screen,
+    state: ScreenState,
     _runtime: Runtime,
     _cancel: CancellationToken,
 }
@@ -72,61 +72,86 @@ struct App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        self.handle_keys(ctx);
 
-        let health = self.watch.health().borrow().clone();
-        let topology = self.watch.topology().borrow().clone();
-        let stamps = self.watch.stamps().borrow().clone();
-        let gates = gates_for_with_stamps(&health, Some(&topology), Some(&stamps));
-
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
+            ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.heading("beegui · S1 Health");
+                for screen in Screen::all() {
+                    let label = format!("{}  {}", screen.shortcut(), screen.label());
+                    let selected = self.screen == screen;
+                    if ui.selectable_label(selected, label).clicked() {
+                        self.screen = screen;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        });
+
+        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("●").color(self.connection_dot()));
+                ui.label(egui::RichText::new(&self.url).monospace().weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(&self.url).monospace().weak());
+                    ui.label(
+                        egui::RichText::new(format!("beegui {}", env!("CARGO_PKG_VERSION")))
+                            .weak()
+                            .small(),
+                    );
                 });
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::Grid::new("gates")
-                .num_columns(3)
-                .spacing([16.0, 6.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    for gate in &gates {
-                        draw_gate(ui, gate);
-                        ui.end_row();
-                    }
-                });
+            screens::draw(self.screen, ui, &self.watch, &mut self.state);
         });
     }
 }
 
-fn draw_gate(ui: &mut egui::Ui, gate: &Gate) {
-    ui.label(egui::RichText::new(status_glyph(gate.status)).color(status_color(gate.status)));
-    ui.label(egui::RichText::new(gate.label).strong());
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(&gate.value).monospace());
-        if let Some(why) = &gate.why {
-            ui.label(egui::RichText::new(why).italics().weak().small());
-        }
-    });
-}
-
-fn status_glyph(s: GateStatus) -> &'static str {
-    match s {
-        GateStatus::Pass => "✔",
-        GateStatus::Warn => "!",
-        GateStatus::Fail => "✘",
-        GateStatus::Unknown => "·",
+impl App {
+    fn handle_keys(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            let screens = Screen::all();
+            let idx = self.screen.index();
+            if i.key_pressed(egui::Key::Tab) {
+                let next = if i.modifiers.shift {
+                    (idx + screens.len() - 1) % screens.len()
+                } else {
+                    (idx + 1) % screens.len()
+                };
+                if let Some(s) = Screen::from_index(next) {
+                    self.screen = s;
+                }
+            }
+            for (n, key) in [
+                (1, egui::Key::Num1),
+                (2, egui::Key::Num2),
+                (3, egui::Key::Num3),
+                (4, egui::Key::Num4),
+                (5, egui::Key::Num5),
+                (6, egui::Key::Num6),
+                (7, egui::Key::Num7),
+                (8, egui::Key::Num8),
+                (9, egui::Key::Num9),
+            ] {
+                if i.key_pressed(key)
+                    && let Some(s) = Screen::from_index(n - 1)
+                {
+                    self.screen = s;
+                }
+            }
+        });
     }
-}
 
-fn status_color(s: GateStatus) -> egui::Color32 {
-    match s {
-        GateStatus::Pass => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
-        GateStatus::Warn => egui::Color32::from_rgb(0xe0, 0xb0, 0x30),
-        GateStatus::Fail => egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
-        GateStatus::Unknown => egui::Color32::GRAY,
+    fn connection_dot(&self) -> egui::Color32 {
+        let rx = self.watch.health();
+        let health = rx.borrow();
+        if health.last_ping.is_some() {
+            egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
+        } else if health.last_update.is_some() {
+            egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)
+        } else {
+            egui::Color32::GRAY
+        }
     }
 }
