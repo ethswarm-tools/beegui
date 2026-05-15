@@ -180,6 +180,8 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         alerts_open: false,
         palette: palette::Palette::default(),
         help_open: false,
+        node_picker_open: false,
+        node_picker_sel: 0,
         screen: Screen::Health,
         state: ScreenState::default(),
         _runtime: runtime,
@@ -383,6 +385,8 @@ struct App {
     alerts_open: bool,
     palette: palette::Palette,
     help_open: bool,
+    node_picker_open: bool,
+    node_picker_sel: usize,
     screen: Screen,
     state: ScreenState,
     _runtime: Runtime,
@@ -576,6 +580,7 @@ impl eframe::App for App {
 
         self.draw_palette(ctx);
         self.draw_help(ctx);
+        self.draw_node_picker(ctx);
 
         if let Some(out) = screen_outcome
             && let Some(name) = out.switch_to_node
@@ -599,6 +604,7 @@ impl App {
         let mut toggle_help = false;
         let mut open_palette = false;
         let mut close_help = false;
+        let mut open_picker = false;
         ctx.input(|i| {
             if palette_open {
                 return;
@@ -621,6 +627,9 @@ impl App {
             }
             if i.modifiers.ctrl && i.key_pressed(egui::Key::A) {
                 toggle_alerts = true;
+            }
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::N) {
+                open_picker = true;
             }
             if !text_focused
                 && (i.key_pressed(egui::Key::Questionmark)
@@ -679,6 +688,16 @@ impl App {
         }
         if close_help {
             self.help_open = false;
+        }
+        if open_picker {
+            self.node_picker_open = !self.node_picker_open;
+            if self.node_picker_open {
+                self.node_picker_sel = self
+                    .nodes
+                    .iter()
+                    .position(|n| n.name == self.active_name)
+                    .unwrap_or(0);
+            }
         }
         if let Some(s) = next_screen {
             self.screen = s;
@@ -867,6 +886,7 @@ impl App {
                             (": / Ctrl+P", "open command palette"),
                             ("Ctrl+L", "toggle bee::http log pane"),
                             ("Ctrl+A", "toggle alerts panel"),
+                            ("Ctrl+N", "open node picker (switch active node)"),
                             ("?", "this help"),
                             ("↑ ↓ / j k", "move selection in the active list"),
                             ("Enter / click", "drill into the selected row"),
@@ -894,6 +914,98 @@ impl App {
         self.help_open = open;
     }
 
+    fn draw_node_picker(&mut self, ctx: &egui::Context) {
+        if !self.node_picker_open {
+            return;
+        }
+        if self.nodes.is_empty() {
+            self.node_picker_open = false;
+            return;
+        }
+        let n = self.nodes.len();
+        if self.node_picker_sel >= n {
+            self.node_picker_sel = 0;
+        }
+        let mut close = false;
+        let mut submit = false;
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                close = true;
+            }
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                self.node_picker_sel = (self.node_picker_sel + n - 1) % n;
+            }
+            if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J) {
+                self.node_picker_sel = (self.node_picker_sel + 1) % n;
+            }
+            if i.key_pressed(egui::Key::Enter) {
+                submit = true;
+            }
+        });
+        let mut clicked_name: Option<String> = None;
+        let mut open = self.node_picker_open;
+        egui::Window::new("Switch node")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -40.0))
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new("↑ ↓ to select  ·  Enter to switch  ·  Esc to cancel")
+                        .weak()
+                        .small(),
+                );
+                ui.add_space(4.0);
+                for (i, node) in self.nodes.iter().enumerate() {
+                    let is_sel = i == self.node_picker_sel;
+                    let is_active = node.name == self.active_name;
+                    let bg = if is_sel {
+                        ui.style().visuals.selection.bg_fill.linear_multiply(0.5)
+                    } else {
+                        egui::Color32::TRANSPARENT
+                    };
+                    let frame = egui::Frame::none()
+                        .fill(bg)
+                        .inner_margin(egui::Margin::symmetric(6.0, 4.0));
+                    let resp = frame
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let marker = if is_active { "●" } else { "○" };
+                                let marker_color = if is_active {
+                                    egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
+                                } else {
+                                    egui::Color32::GRAY
+                                };
+                                ui.label(egui::RichText::new(marker).color(marker_color));
+                                ui.label(egui::RichText::new(&node.name).strong());
+                                ui.label(egui::RichText::new(&node.url).monospace().weak());
+                            });
+                        })
+                        .response
+                        .interact(egui::Sense::click());
+                    if resp.clicked() {
+                        self.node_picker_sel = i;
+                        clicked_name = Some(node.name.clone());
+                    }
+                }
+            });
+        self.node_picker_open = open;
+        if close {
+            self.node_picker_open = false;
+            return;
+        }
+        let target = if submit {
+            self.nodes.get(self.node_picker_sel).map(|n| n.name.clone())
+        } else {
+            clicked_name
+        };
+        if let Some(name) = target {
+            self.node_picker_open = false;
+            self.switch_active_node(&name);
+        }
+    }
+
     fn apply_palette_action_simple(&mut self, a: palette::PaletteAction) {
         match a {
             palette::PaletteAction::SwitchScreen(s) => self.screen = s,
@@ -916,6 +1028,17 @@ impl App {
             }
             palette::PaletteAction::WatchlistAdd(r) => {
                 self.state.watchlist.add_external(r, &self.api, &self.rt_handle);
+            }
+            palette::PaletteAction::OpenNodePicker => {
+                self.node_picker_open = true;
+                self.node_picker_sel = self
+                    .nodes
+                    .iter()
+                    .position(|n| n.name == self.active_name)
+                    .unwrap_or(0);
+            }
+            palette::PaletteAction::SwitchContext(name) => {
+                self.switch_active_node(&name);
             }
         }
     }

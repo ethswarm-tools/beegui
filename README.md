@@ -19,15 +19,15 @@ cockpit logic.
 
 ## Status
 
-**0.9.0** — external Bee log tailing. `--bee-log <path>` /
-`--bee-log-cmd <cmd>` (or `[bee] log_file` / `log_command` in
-config) pipe Bee's own log output into a new tabbed bottom pane
-alongside the existing `bee::http` tail; auto-discovery on Linux
-walks `/proc` for the Bee process behind the active node URL.
-Earlier capabilities — switch active node (v0.8), `rchash` bench
-(v0.8), navigation parity (v0.7), palette verbs (v0.5/v0.6),
-webhook + desktop notifications, GSOC + pubsub history, theme
-presets, cargo-dist installers, full `--once` surface — remain.
+**0.10.0** — node switching from anywhere. `Ctrl+N` opens a
+centred picker (or `:nodes` in the palette); `:context <name>`
+switches by typed name. v0.9's external Bee log tailing
+(`--bee-log` / `--bee-log-cmd`, Linux `/proc` auto-discovery,
+tabbed bottom pane) remains; earlier capabilities — switch from
+Fleet (v0.8), `rchash` bench (v0.8), navigation parity (v0.7),
+palette verbs (v0.5/v0.6), webhook + desktop notifications, GSOC
++ pubsub history, theme presets, cargo-dist installers, full
+`--once` surface — remain.
 
 | Screen | State |
 |---|---|
@@ -125,6 +125,7 @@ theme = "auto"        # auto | light | dark
 | `?` | Open the help overlay |
 | `Ctrl+L` | Toggle the bottom log pane |
 | `Ctrl+A` | Toggle the alerts popup |
+| `Ctrl+N` | Open the node picker (switch active node) |
 | `↑/↓` or `j/k` | Move selection in the active list |
 | `Enter` / click | Drill into the selected row |
 | `PgUp` / `PgDn` | Page selection ±10 rows |

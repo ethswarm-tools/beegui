@@ -109,6 +109,16 @@ pub const VERBS: &[VerbSpec] = &[
         usage: ":alerts",
     },
     VerbSpec {
+        name: "nodes",
+        summary: "open the node picker (same as Ctrl+N)",
+        usage: ":nodes",
+    },
+    VerbSpec {
+        name: "context",
+        summary: "switch active node by name",
+        usage: ":context <name>",
+    },
+    VerbSpec {
         name: "help",
         summary: "show keys + verb list",
         usage: ":help",
@@ -160,6 +170,8 @@ pub enum PaletteAction {
         max: Option<u64>,
     },
     WatchlistAdd(String),
+    OpenNodePicker,
+    SwitchContext(String),
 }
 
 pub struct Palette {
@@ -306,6 +318,8 @@ impl Palette {
             "diagnose" => self.verb_diagnose(api, rt),
             "logs" => vec![PaletteAction::ToggleLogs],
             "alerts" => vec![PaletteAction::ToggleAlerts],
+            "nodes" | "node" => vec![PaletteAction::OpenNodePicker],
+            "context" | "ctx" | "switch" => self.verb_context(&args),
             "help" | "?" => vec![PaletteAction::ShowHelp],
             "quit" | "q" | "exit" => vec![PaletteAction::Quit],
             other => {
@@ -342,6 +356,14 @@ impl Palette {
             }
         };
         vec![PaletteAction::SwitchScreen(screen)]
+    }
+
+    fn verb_context(&mut self, args: &[&str]) -> Vec<PaletteAction> {
+        let Some(name) = args.first() else {
+            self.set_banner(BannerLevel::Err, "usage: :context <name>");
+            return Vec::new();
+        };
+        vec![PaletteAction::SwitchContext((*name).to_string())]
     }
 
     fn verb_hash(&mut self, args: &[&str]) -> Vec<PaletteAction> {

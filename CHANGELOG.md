@@ -11,6 +11,36 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.10.0] - 2026-05-15
+
+The "switch from anywhere" release. v0.8 made it possible to
+switch the active node from S15 Fleet by pressing Enter on a row;
+v0.10 makes that flow available from every screen, mirroring
+bee-tui v1.10's `Ctrl+N` + `:context`.
+
+### Added
+
+- **`Ctrl+N` node picker.** Opens a centred popup listing every
+  `[[nodes]]` entry (or every positional CLI URL). `↑/↓` (or
+  `j/k`) navigate; `Enter` switches; click also works; `Esc`
+  cancels. A green dot marks the currently active node; the
+  picker pre-selects it so `Ctrl+N Enter` is a no-op safety
+  net.
+- **`:nodes` / `:node` palette verb** — same as `Ctrl+N`. Lets
+  operators who live in the palette open the picker without
+  reaching for the modifier.
+- **`:context <name>` palette verb** (alias `:ctx`, `:switch`)
+  — typed switch by node name. Skips the picker entirely;
+  banner reports the result.
+
+### Notes
+
+- Switching reuses the v0.8 `switch_active_node` plumbing — the
+  BeeWatch hub is torn down + rebuilt against the new endpoint
+  and the v0.9 bee-log tailer re-resolves discovery against the
+  new node. The fleet poller (the data backing S15) keeps
+  running across switches.
+
 ## [0.9.0] - 2026-05-15
 
 The "external Bee logs" release. bee-tui has been tailing the Bee
