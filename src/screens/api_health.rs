@@ -2,15 +2,15 @@
 //! placeholder. Call-stats require log capture, which isn't wired up
 //! in beegui's v0.2 — that lands with the log pane.
 
-use bee_cockpit_core::log_capture::LogEntry;
+use bee_cockpit_core::log_capture::LogCapture;
 use bee_cockpit_core::views::api_health::{ApiHealthView, PendingTxRow, view_for};
 use bee_cockpit_core::watch::BeeWatch;
 
-pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch, url: &str) {
+pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch, url: &str, log_capture: &LogCapture) {
     let health = watch.health().borrow().clone();
     let transactions = watch.transactions().borrow().clone();
-    let empty: Vec<LogEntry> = Vec::new();
-    let view = view_for(url, &empty, &health, &transactions);
+    let entries = log_capture.snapshot();
+    let view = view_for(url, &entries, &health, &transactions);
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         draw_endpoint(ui, &view);
@@ -106,7 +106,7 @@ fn draw_stats(ui: &mut egui::Ui, view: &ApiHealthView) {
     ui.label(egui::RichText::new("HTTP call stats").strong());
     if cs.sample_size == 0 {
         ui.label(
-            egui::RichText::new("call-stats need the log pane (not yet wired in beegui v0.2)")
+            egui::RichText::new("no HTTP calls captured yet — open the log pane below.")
                 .italics()
                 .weak(),
         );

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use bee_cockpit_core::api::ApiClient;
 use bee_cockpit_core::fleet::FleetSnapshot;
+use bee_cockpit_core::log_capture::LogCapture;
 use bee_cockpit_core::watch::BeeWatch;
 use strum::{EnumIter, IntoEnumIterator};
 use tokio::runtime::Handle;
@@ -16,6 +17,7 @@ pub struct DrawContext<'a> {
     pub api: Arc<ApiClient>,
     pub rt: Handle,
     pub fleet_rx: Option<&'a watch::Receiver<FleetSnapshot>>,
+    pub log_capture: &'a LogCapture,
 }
 
 pub mod api_health;
@@ -111,7 +113,7 @@ pub fn draw(
         Screen::Warmup => warmup::draw(ui, watch, &mut state.warmup),
         Screen::Peers => peers::draw(ui, watch),
         Screen::Network => network::draw(ui, watch),
-        Screen::ApiHealth => api_health::draw(ui, watch, ctx.url),
+        Screen::ApiHealth => api_health::draw(ui, watch, ctx.url, ctx.log_capture),
         Screen::Tags => tags::draw(ui, watch),
         Screen::Pins => pins::draw(ui, watch),
         Screen::Manifest => manifest::draw(ui, &mut state.manifest, ctx.api.clone(), &ctx.rt),

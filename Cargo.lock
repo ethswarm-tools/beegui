@@ -590,6 +590,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-error",
+ "tracing-subscriber",
 ]
 
 [[package]]
