@@ -8,9 +8,13 @@ use std::time::Instant;
 
 use std::path::PathBuf;
 
+use bee::swarm::Topic;
 use bee_cockpit_core::api::ApiClient;
+use bee_cockpit_core::feed_probe;
 use bee_cockpit_core::log_capture::LogCapture;
 use bee_cockpit_core::pprof_bundle;
+use bee_cockpit_core::stamp_preview;
+use bee_cockpit_core::uploads;
 use bee_cockpit_core::utility_verbs;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -68,6 +72,26 @@ pub const VERBS: &[VerbSpec] = &[
         name: "durability",
         summary: "add reference to Watchlist + check",
         usage: ":durability <ref>",
+    },
+    VerbSpec {
+        name: "upload",
+        summary: "upload a file or directory to Bee",
+        usage: ":upload <path> [batch-prefix]",
+    },
+    VerbSpec {
+        name: "feed-probe",
+        summary: "fetch latest feed update",
+        usage: ":feed-probe <owner> <topic>",
+    },
+    VerbSpec {
+        name: "pss",
+        summary: "send a PSS message",
+        usage: ":pss <topic> <payload> [batch-prefix]",
+    },
+    VerbSpec {
+        name: "batch",
+        summary: "stamp-batch math (buy/topup/dilute/extend)",
+        usage: ":batch buy <depth> [amount] | :batch topup|dilute|extend <id> <arg>",
     },
     VerbSpec {
         name: "diagnose",
@@ -282,6 +306,10 @@ impl Palette {
             "inspect" | "manifest" => self.verb_load_manifest(&args),
             "feed-timeline" | "ft" => self.verb_feed_timeline(&args),
             "durability" | "durability-check" => self.verb_durability(&args),
+            "upload" => self.verb_upload(&args, api, rt),
+            "feed-probe" | "fp" => self.verb_feed_probe(&args, api, rt),
+            "pss" => self.verb_pss(&args, api, rt),
+            "batch" => self.verb_batch(&args, api, rt),
             "diagnose" => self.verb_diagnose(api, rt),
             "logs" => vec![PaletteAction::ToggleLogs],
             "alerts" => vec![PaletteAction::ToggleAlerts],
@@ -402,6 +430,142 @@ impl Palette {
         ]
     }
 
+    fn verb_upload(
+        &mut self,
+        args: &[&str],
+        api: Arc<ApiClient>,
+        rt: &Handle,
+    ) -> Vec<PaletteAction> {
+        let Some(path_str) = args.first() else {
+            self.set_banner(BannerLevel::Err, "usage: :upload <path> [batch-prefix]");
+            return Vec::new();
+        };
+        let path = PathBuf::from(path_str);
+        let prefix = args.get(1).map(|s| (*s).to_string());
+        let meta = match std::fs::metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                self.set_banner(BannerLevel::Err, format!("stat {}: {e}", path.display()));
+                return Vec::new();
+            }
+        };
+        let is_dir = meta.is_dir();
+        self.set_banner(
+            BannerLevel::Ok,
+            format!(
+                "uploading {} ({})…",
+                path.display(),
+                if is_dir { "directory" } else { "file" }
+            ),
+        );
+        let tx = self.out_tx.clone();
+        rt.spawn(async move {
+            let outcome = run_upload(api, path, is_dir, prefix).await;
+            let _ = tx.send(PaletteOutcome::Banner(outcome));
+        });
+        Vec::new()
+    }
+
+    fn verb_feed_probe(
+        &mut self,
+        args: &[&str],
+        api: Arc<ApiClient>,
+        rt: &Handle,
+    ) -> Vec<PaletteAction> {
+        if args.len() < 2 {
+            self.set_banner(BannerLevel::Err, "usage: :feed-probe <owner> <topic>");
+            return Vec::new();
+        }
+        let owner_s = args[0].to_string();
+        let topic_s = args[1].to_string();
+        let parsed = match feed_probe::parse_args(&owner_s, &topic_s) {
+            Ok(p) => p,
+            Err(e) => {
+                self.set_banner(BannerLevel::Err, format!("feed-probe: {e}"));
+                return Vec::new();
+            }
+        };
+        self.set_banner(BannerLevel::Ok, "probing feed…");
+        let tx = self.out_tx.clone();
+        rt.spawn(async move {
+            let outcome = match feed_probe::probe(api, parsed).await {
+                Ok(r) => Banner {
+                    level: BannerLevel::Ok,
+                    text: format!(
+                        "feed-probe: idx={} payload={}B ref={}",
+                        r.index,
+                        r.payload_bytes,
+                        r.reference_hex.unwrap_or_else(|| "—".into()),
+                    ),
+                    when: Instant::now(),
+                },
+                Err(e) => Banner {
+                    level: BannerLevel::Err,
+                    text: format!("feed-probe: {e}"),
+                    when: Instant::now(),
+                },
+            };
+            let _ = tx.send(PaletteOutcome::Banner(outcome));
+        });
+        Vec::new()
+    }
+
+    fn verb_pss(
+        &mut self,
+        args: &[&str],
+        api: Arc<ApiClient>,
+        rt: &Handle,
+    ) -> Vec<PaletteAction> {
+        if args.len() < 2 {
+            self.set_banner(
+                BannerLevel::Err,
+                "usage: :pss <topic> <payload> [batch-prefix]",
+            );
+            return Vec::new();
+        }
+        let topic_arg = args[0].to_string();
+        let payload = args[1].as_bytes().to_vec();
+        let prefix = args.get(2).map(|s| (*s).to_string());
+        let topic = match parse_topic(&topic_arg) {
+            Ok(t) => t,
+            Err(e) => {
+                self.set_banner(BannerLevel::Err, format!("topic: {e}"));
+                return Vec::new();
+            }
+        };
+        self.set_banner(BannerLevel::Ok, format!("sending PSS to {}…", &topic_arg));
+        let tx = self.out_tx.clone();
+        rt.spawn(async move {
+            let outcome = run_pss(api, topic, payload, prefix).await;
+            let _ = tx.send(PaletteOutcome::Banner(outcome));
+        });
+        Vec::new()
+    }
+
+    fn verb_batch(
+        &mut self,
+        args: &[&str],
+        api: Arc<ApiClient>,
+        rt: &Handle,
+    ) -> Vec<PaletteAction> {
+        let Some(sub) = args.first() else {
+            self.set_banner(
+                BannerLevel::Err,
+                "usage: :batch buy|topup|dilute|extend <args…>",
+            );
+            return Vec::new();
+        };
+        self.set_banner(BannerLevel::Ok, format!("computing batch {sub}…"));
+        let sub = (*sub).to_string();
+        let rest: Vec<String> = args[1..].iter().map(|s| (*s).to_string()).collect();
+        let tx = self.out_tx.clone();
+        rt.spawn(async move {
+            let outcome = run_batch(api, &sub, &rest).await;
+            let _ = tx.send(PaletteOutcome::Banner(outcome));
+        });
+        Vec::new()
+    }
+
     fn verb_diagnose(&mut self, api: Arc<ApiClient>, rt: &Handle) -> Vec<PaletteAction> {
         let tx = self.out_tx.clone();
         let base = api.url.clone();
@@ -441,6 +605,383 @@ impl Palette {
             }
         }
         out
+    }
+}
+
+async fn run_upload(
+    api: Arc<ApiClient>,
+    path: PathBuf,
+    is_dir: bool,
+    prefix: Option<String>,
+) -> Banner {
+    let batches = match api.bee().postage().get_postage_batches().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("upload: /stamps failed: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let batch = match pick_batch(&batches, prefix.as_deref()) {
+        Ok(b) => b.clone(),
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("upload: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    if is_dir {
+        return run_upload_dir(api, path, batch).await;
+    }
+    let data = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("upload: read {}: {e}", path.display()),
+                when: Instant::now(),
+            };
+        }
+    };
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let ct = upload_content_type(&path);
+    match api
+        .bee()
+        .file()
+        .upload_file(&batch.batch_id, data, &name, &ct, None)
+        .await
+    {
+        Ok(res) => Banner {
+            level: BannerLevel::Ok,
+            text: format!(
+                "uploaded {} → ref {} (batch {})",
+                path.display(),
+                res.reference.to_hex(),
+                &batch.batch_id.to_hex()[..8],
+            ),
+            when: Instant::now(),
+        },
+        Err(e) => Banner {
+            level: BannerLevel::Err,
+            text: format!("upload failed: {e}"),
+            when: Instant::now(),
+        },
+    }
+}
+
+async fn run_upload_dir(
+    api: Arc<ApiClient>,
+    path: PathBuf,
+    batch: bee::postage::PostageBatch,
+) -> Banner {
+    let walked = match uploads::walk_dir(&path) {
+        Ok(w) => w,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("upload: walk {}: {e}", path.display()),
+                when: Instant::now(),
+            };
+        }
+    };
+    if walked.entries.is_empty() {
+        return Banner {
+            level: BannerLevel::Err,
+            text: format!("upload: {} is empty", path.display()),
+            when: Instant::now(),
+        };
+    }
+    let opts = bee::api::CollectionUploadOptions {
+        index_document: walked.default_index.clone(),
+        ..Default::default()
+    };
+    match api
+        .bee()
+        .file()
+        .upload_collection_entries(&batch.batch_id, &walked.entries, Some(&opts))
+        .await
+    {
+        Ok(res) => Banner {
+            level: BannerLevel::Ok,
+            text: format!(
+                "uploaded {} files ({} bytes) → ref {} (batch {})",
+                walked.entries.len(),
+                walked.total_bytes,
+                res.reference.to_hex(),
+                &batch.batch_id.to_hex()[..8],
+            ),
+            when: Instant::now(),
+        },
+        Err(e) => Banner {
+            level: BannerLevel::Err,
+            text: format!("upload failed: {e}"),
+            when: Instant::now(),
+        },
+    }
+}
+
+fn pick_batch<'a>(
+    batches: &'a [bee::postage::PostageBatch],
+    prefix: Option<&str>,
+) -> Result<&'a bee::postage::PostageBatch, String> {
+    if let Some(p) = prefix {
+        return stamp_preview::match_batch_prefix(batches, p);
+    }
+    let usable: Vec<&bee::postage::PostageBatch> = batches
+        .iter()
+        .filter(|b| b.usable && b.batch_ttl > 0)
+        .collect();
+    if usable.is_empty() {
+        return Err("no usable batch with positive TTL — buy or topup one first".into());
+    }
+    usable
+        .into_iter()
+        .max_by_key(|b| b.batch_ttl)
+        .ok_or_else(|| "no usable batch".into())
+}
+
+fn upload_content_type(path: &std::path::Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("html") | Some("htm") => "text/html",
+        Some("txt") | Some("md") => "text/plain",
+        Some("json") => "application/json",
+        Some("css") => "text/css",
+        Some("js") => "application/javascript",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("webp") => "image/webp",
+        Some("pdf") => "application/pdf",
+        Some("zip") => "application/zip",
+        Some("tar") => "application/x-tar",
+        Some("gz") | Some("tgz") => "application/gzip",
+        Some("wasm") => "application/wasm",
+        _ => "",
+    }
+    .to_string()
+}
+
+fn parse_topic(s: &str) -> Result<Topic, String> {
+    let trimmed = s.trim().trim_start_matches("0x");
+    if trimmed.len() == 64
+        && let Ok(bytes) = decode_hex_32(trimmed)
+    {
+        return Topic::new(&bytes).map_err(|e| e.to_string());
+    }
+    // Treat as utf-8 string and apply Bee's keccak256-of-string convention.
+    Ok(Topic::from_string(s))
+}
+
+fn decode_hex_32(s: &str) -> Result<[u8; 32], String> {
+    let mut arr = [0u8; 32];
+    for i in 0..32 {
+        arr[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16)
+            .map_err(|e| format!("bad hex at {i}: {e}"))?;
+    }
+    Ok(arr)
+}
+
+async fn run_pss(
+    api: Arc<ApiClient>,
+    topic: Topic,
+    payload: Vec<u8>,
+    prefix: Option<String>,
+) -> Banner {
+    let batches = match api.bee().postage().get_postage_batches().await {
+        Ok(b) => b,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("pss: /stamps failed: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let batch = match pick_batch(&batches, prefix.as_deref()) {
+        Ok(b) => b.clone(),
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("pss: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    // Targets list — empty means broadcast.
+    match api
+        .bee()
+        .pss()
+        .send(&batch.batch_id, &topic, "", payload.clone(), None)
+        .await
+    {
+        Ok(_) => Banner {
+            level: BannerLevel::Ok,
+            text: format!(
+                "pss sent — topic {} · {} bytes · batch {}",
+                topic.to_hex(),
+                payload.len(),
+                &batch.batch_id.to_hex()[..8],
+            ),
+            when: Instant::now(),
+        },
+        Err(e) => Banner {
+            level: BannerLevel::Err,
+            text: format!("pss send failed: {e}"),
+            when: Instant::now(),
+        },
+    }
+}
+
+async fn run_batch(api: Arc<ApiClient>, sub: &str, rest: &[String]) -> Banner {
+    match sub {
+        "buy" => batch_buy(api, rest).await,
+        "topup" | "dilute" | "extend" => batch_modify(api, sub, rest).await,
+        other => Banner {
+            level: BannerLevel::Err,
+            text: format!("batch: unknown subverb {other:?}"),
+            when: Instant::now(),
+        },
+    }
+}
+
+async fn batch_buy(api: Arc<ApiClient>, rest: &[String]) -> Banner {
+    if rest.len() < 2 {
+        return Banner {
+            level: BannerLevel::Err,
+            text: "usage: :batch buy <depth> <amount_plur>".into(),
+            when: Instant::now(),
+        };
+    }
+    let depth: u8 = match rest[0].parse() {
+        Ok(d) => d,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("depth: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let amount: num_bigint::BigInt = match rest[1].parse() {
+        Ok(v) => v,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("amount: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let chain = match api.bee().debug().chain_state().await {
+        Ok(c) => c,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("batch: /chainstate failed: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    match stamp_preview::buy_preview(depth, amount, &chain) {
+        Ok(p) => Banner {
+            level: BannerLevel::Ok,
+            text: p.summary(),
+            when: Instant::now(),
+        },
+        Err(e) => Banner {
+            level: BannerLevel::Err,
+            text: format!("buy-preview: {e}"),
+            when: Instant::now(),
+        },
+    }
+}
+
+async fn batch_modify(api: Arc<ApiClient>, sub: &str, rest: &[String]) -> Banner {
+    if rest.len() < 2 {
+        return Banner {
+            level: BannerLevel::Err,
+            text: format!("usage: :batch {sub} <batch-id-prefix> <arg>"),
+            when: Instant::now(),
+        };
+    }
+    let bee = api.bee();
+    let postage = bee.postage();
+    let debug = bee.debug();
+    let (batches, chain) = tokio::join!(postage.get_postage_batches(), debug.chain_state());
+    let batches = match batches {
+        Ok(b) => b,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("batch: /stamps failed: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let chain = match chain {
+        Ok(c) => c,
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("batch: /chainstate failed: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let batch = match stamp_preview::match_batch_prefix(&batches, &rest[0]) {
+        Ok(b) => b.clone(),
+        Err(e) => {
+            return Banner {
+                level: BannerLevel::Err,
+                text: format!("batch: {e}"),
+                when: Instant::now(),
+            };
+        }
+    };
+    let arg = &rest[1];
+    let result: Result<String, String> = match sub {
+        "topup" => arg
+            .parse::<num_bigint::BigInt>()
+            .map_err(|e| format!("topup amount: {e}"))
+            .and_then(|amount| {
+                stamp_preview::topup_preview(&batch, amount, &chain).map(|p| p.summary())
+            }),
+        "dilute" => arg
+            .parse::<u8>()
+            .map_err(|e| format!("dilute depth: {e}"))
+            .and_then(|nd| stamp_preview::dilute_preview(&batch, nd).map(|p| p.summary())),
+        "extend" => arg
+            .parse::<i64>()
+            .map_err(|e| format!("extend seconds: {e}"))
+            .and_then(|secs| {
+                stamp_preview::extend_preview(&batch, secs, &chain).map(|p| p.summary())
+            }),
+        _ => unreachable!(),
+    };
+    match result {
+        Ok(text) => Banner {
+            level: BannerLevel::Ok,
+            text,
+            when: Instant::now(),
+        },
+        Err(text) => Banner {
+            level: BannerLevel::Err,
+            text,
+            when: Instant::now(),
+        },
     }
 }
 

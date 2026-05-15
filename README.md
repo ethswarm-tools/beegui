@@ -19,13 +19,13 @@ cockpit logic.
 
 ## Status
 
-**0.5.0** — interactive command palette closes the last bee-tui
-parity gap. Type `:` (or `Ctrl+P`) to filter verbs; `:hash`,
-`:cid`, `:inspect`, `:feed-timeline`, `:durability`,
-`:diagnose`, `:go <screen>` and friends are reachable from the
-keyboard. Earlier 0.4 capabilities — webhook firing, native
+**0.6.0** — active palette verbs. `:upload <path>`, `:batch
+buy|topup|dilute|extend`, `:pss`, `:feed-probe` join the
+inspection verbs from v0.5. Drop a file onto the beegui window
+to pre-fill `:upload`. Earlier capabilities — webhook firing,
 desktop notifications, GSOC + pubsub history, theme presets,
-prebuilt cargo-dist installers — remain.
+prebuilt cargo-dist installers, the full `--once` surface —
+remain.
 
 | Screen | State |
 |---|---|

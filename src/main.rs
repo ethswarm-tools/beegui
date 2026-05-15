@@ -349,6 +349,7 @@ impl eframe::App for App {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
         self.handle_keys(ctx);
         self.observe_alerts();
+        self.handle_dropped_files(ctx);
         let pumped = self.palette.pump();
         for a in pumped {
             self.apply_palette_action(a, frame);
@@ -610,6 +611,20 @@ impl App {
         }
         if let Some(s) = next_screen {
             self.screen = s;
+        }
+    }
+
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        if let Some(path) = dropped.into_iter().next() {
+            self.palette.open();
+            self.palette.input = format!(":upload {}", path.display());
         }
     }
 

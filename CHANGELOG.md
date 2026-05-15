@@ -11,6 +11,47 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.6.0] - 2026-05-15
+
+The "active verbs" release. v0.5 added the palette + inspection
+verbs; v0.6 adds the verbs that *do* things — uploads, batch
+math, and PSS sends.
+
+### Added
+
+- **`:upload <path> [batch-prefix]`.** Single-shot file or
+  directory upload. The batch is auto-picked (longest-TTL usable
+  batch) when no prefix is supplied; the returned reference
+  surfaces as a banner. Directory uploads use core's
+  `uploads::walk_dir` + bee-rs's collection-entries endpoint,
+  with the same hidden-file / symlink / size rules as
+  `--once upload-collection`.
+- **Drag-and-drop.** Dropping a file onto the beegui window
+  opens the palette pre-filled with `:upload <path>` so the
+  operator just hits Enter to ship.
+- **`:batch buy <depth> <amount>` / `:batch topup|dilute|extend
+  <batch-prefix> <arg>`.** Stamp-batch math via
+  `stamp_preview::buy_preview` / `topup_preview` /
+  `dilute_preview` / `extend_preview`. Result lands in the
+  banner; this is preview-only (no transaction is sent), same
+  as `--once buy-preview` etc.
+- **`:feed-probe <owner> <topic>`.** Fetch latest feed update
+  via `feed_probe::probe`; banner shows index, payload size,
+  reference.
+- **`:pss <topic> <payload> [batch-prefix]`.** Sends a PSS
+  message. Hex 32-byte topic is parsed as-is; anything else is
+  keccak256-of-string (Bee's `Topic::from_string` convention).
+  Batch auto-picked when no prefix supplied.
+
+### Notes
+
+- `:batch` math is preview-only. Sending the actual buy /
+  topup / dilute / extend transaction stays in `--once`'s lane
+  for now because it touches real BZZ and warrants explicit
+  confirmation flow design.
+- This brings the active palette verb count to 17 — broadly
+  in line with bee-tui's interactive `:` set.
+
 ## [0.5.0] - 2026-05-15
 
 The "command palette" release. The last interactive parity gap
