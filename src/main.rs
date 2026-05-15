@@ -10,6 +10,7 @@
 //! [egui]: https://github.com/emilk/egui
 
 mod alerts;
+mod bee_log;
 mod once;
 mod palette;
 mod screens;
@@ -93,6 +94,16 @@ struct Cli {
     /// the config's node list and uses these instead. Mirrors
     /// bee-tui's positional-URL fleet flow.
     urls: Vec<String>,
+    /// Path to the Bee process's log file. Tail it into the
+    /// Errors / Warn / Info / Debug / Bee HTTP tabs of the
+    /// bottom log pane. Overrides `[bee].log_file` from config.
+    #[arg(long = "bee-log", value_name = "PATH")]
+    bee_log: Option<PathBuf>,
+    /// Shell command whose stdout streams Bee's logs
+    /// (e.g. `journalctl -u bee -f`). Overrides
+    /// `[bee].log_command` from config.
+    #[arg(long = "bee-log-cmd", value_name = "CMD")]
+    bee_log_cmd: Option<String>,
 }
 
 fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
@@ -133,6 +144,19 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         (None, None)
     };
 
+    let bee_log_cli_file = cli.bee_log.clone();
+    let bee_log_cli_cmd = cli.bee_log_cmd.clone();
+    let mut bee_logs = bee_log::BeeLogs::new();
+    {
+        let _guard = runtime.enter();
+        let source = bee_log::resolve_source(
+            bee_log_cli_file.as_deref().and_then(|p| p.to_str()),
+            bee_log_cli_cmd.as_deref(),
+            &active,
+        );
+        bee_logs.respawn(source, watch_cancel.clone());
+    }
+
     let app = App {
         url,
         active_name: active.name,
@@ -146,6 +170,10 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         fleet_resync,
         log_capture,
         log_pane_open: false,
+        log_pane_tab: bee_cockpit_core::bee_log::LogTab::SelfHttp,
+        bee_logs,
+        bee_log_cli_file,
+        bee_log_cli_cmd,
         alerts_cfg: alerts_cfg.clone(),
         notif_cfg: notif_cfg.clone(),
         alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
@@ -345,6 +373,10 @@ struct App {
     fleet_resync: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     log_capture: LogCapture,
     log_pane_open: bool,
+    log_pane_tab: bee_cockpit_core::bee_log::LogTab,
+    bee_logs: bee_log::BeeLogs,
+    bee_log_cli_file: Option<PathBuf>,
+    bee_log_cli_cmd: Option<String>,
     alerts_cfg: AlertsConfig,
     notif_cfg: NotificationsConfig,
     alerts: alerts::AlertsPipeline,
@@ -363,6 +395,7 @@ impl eframe::App for App {
         self.handle_keys(ctx);
         self.observe_alerts();
         self.handle_dropped_files(ctx);
+        self.bee_logs.drain();
         let pumped = self.palette.pump();
         for a in pumped {
             self.apply_palette_action(a, frame);
@@ -437,9 +470,14 @@ impl eframe::App for App {
         if self.log_pane_open {
             egui::TopBottomPanel::bottom("logs")
                 .resizable(true)
-                .default_height(180.0)
+                .default_height(220.0)
                 .show(ctx, |ui| {
-                    draw_log_pane(ui, &self.log_capture);
+                    draw_log_pane(
+                        ui,
+                        &self.log_capture,
+                        &self.bee_logs,
+                        &mut self.log_pane_tab,
+                    );
                 });
         }
 
@@ -704,7 +742,7 @@ impl App {
         self.api = api;
         self.url = node.url.clone();
         self.active_name = node.name.clone();
-        self.watch_cancel = new_cancel;
+        self.watch_cancel = new_cancel.clone();
         self.watch = watch;
         // Reset alerts state so the first frame's "Unknown → X"
         // transitions don't fire as bogus recoveries.
@@ -713,6 +751,17 @@ impl App {
             self.notif_cfg.clone(),
             Some(self.rt_handle.clone()),
         );
+        // Re-resolve the bee-log source for the new node and
+        // respawn the tailer under the new watch_cancel scope.
+        let source = bee_log::resolve_source(
+            self.bee_log_cli_file.as_deref().and_then(|p| p.to_str()),
+            self.bee_log_cli_cmd.as_deref(),
+            &node,
+        );
+        {
+            let _guard = self.rt_handle.enter();
+            self.bee_logs.respawn(source, new_cancel);
+        }
         self.palette.set_banner(
             palette::BannerLevel::Ok,
             format!("switched to {} ({})", node.name, node.url),
@@ -930,47 +979,149 @@ fn format_age(secs: u64) -> String {
     }
 }
 
-fn draw_log_pane(ui: &mut egui::Ui, capture: &LogCapture) {
-    let entries = capture.snapshot();
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("bee::http log").strong());
-        ui.label(egui::RichText::new(format!("({} entries)", entries.len())).weak());
+fn draw_log_pane(
+    ui: &mut egui::Ui,
+    capture: &LogCapture,
+    bee_logs: &bee_log::BeeLogs,
+    tab: &mut bee_cockpit_core::bee_log::LogTab,
+) {
+    use bee_cockpit_core::bee_log::LogTab;
+    let source_label = match &bee_logs.source {
+        bee_log::ResolvedSource::None { .. } => String::from("(no bee-log source)"),
+        bee_log::ResolvedSource::File { path, origin } => {
+            format!("file: {} [{}]", path.display(), origin.label())
+        }
+        bee_log::ResolvedSource::Command { command, origin } => {
+            format!("cmd: {command} [{}]", origin.label())
+        }
+    };
+    ui.horizontal_wrapped(|ui| {
+        for t in LogTab::ALL.iter().copied() {
+            let count = tab_entry_count(t, capture, bee_logs);
+            let label = if count > 0 {
+                format!("{} ({count})", t.label())
+            } else {
+                t.label().to_string()
+            };
+            if ui.selectable_label(*tab == t, label).clicked() {
+                *tab = t;
+            }
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(egui::RichText::new(source_label).weak().small());
+        });
     });
+    ui.separator();
     egui::ScrollArea::vertical()
         .stick_to_bottom(true)
-        .show(ui, |ui| {
-            for entry in entries.iter() {
-                let status_color = match entry.status {
-                    Some(s) if s >= 500 => egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
-                    Some(s) if s >= 400 => egui::Color32::from_rgb(0xe0, 0xb0, 0x30),
-                    Some(_) => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
-                    None => egui::Color32::GRAY,
-                };
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&entry.ts).monospace().weak());
-                    ui.label(
-                        egui::RichText::new(
-                            entry
-                                .status
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| "—".into()),
-                        )
-                        .color(status_color)
-                        .monospace(),
-                    );
-                    ui.label(egui::RichText::new(&entry.method).monospace());
-                    ui.label(
-                        egui::RichText::new(
-                            entry
-                                .elapsed_ms
-                                .map(|m| format!("{m}ms"))
-                                .unwrap_or_else(|| "—".into()),
-                        )
-                        .monospace()
-                        .weak(),
-                    );
-                    ui.label(egui::RichText::new(&entry.url).monospace());
-                });
-            }
+        .auto_shrink([false; 2])
+        .show(ui, |ui| match *tab {
+            LogTab::SelfHttp => draw_self_http_tab(ui, capture),
+            LogTab::Cockpit => draw_cockpit_tab(ui),
+            other => draw_bee_log_tab(ui, bee_logs, other),
         });
+}
+
+fn tab_entry_count(
+    tab: bee_cockpit_core::bee_log::LogTab,
+    capture: &LogCapture,
+    bee_logs: &bee_log::BeeLogs,
+) -> usize {
+    use bee_cockpit_core::bee_log::LogTab;
+    match tab {
+        LogTab::SelfHttp => capture.snapshot().len(),
+        LogTab::Cockpit => bee_cockpit_core::log_capture::cockpit_handle()
+            .map(|h| h.snapshot().len())
+            .unwrap_or(0),
+        other => bee_logs.snapshot(other).len(),
+    }
+}
+
+fn draw_self_http_tab(ui: &mut egui::Ui, capture: &LogCapture) {
+    for entry in capture.snapshot().iter() {
+        let status_color = match entry.status {
+            Some(s) if s >= 500 => egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
+            Some(s) if s >= 400 => egui::Color32::from_rgb(0xe0, 0xb0, 0x30),
+            Some(_) => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
+            None => egui::Color32::GRAY,
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&entry.ts).monospace().weak());
+            ui.label(
+                egui::RichText::new(
+                    entry
+                        .status
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                )
+                .color(status_color)
+                .monospace(),
+            );
+            ui.label(egui::RichText::new(&entry.method).monospace());
+            ui.label(
+                egui::RichText::new(
+                    entry
+                        .elapsed_ms
+                        .map(|m| format!("{m}ms"))
+                        .unwrap_or_else(|| "—".into()),
+                )
+                .monospace()
+                .weak(),
+            );
+            ui.label(egui::RichText::new(&entry.url).monospace());
+        });
+    }
+}
+
+fn draw_cockpit_tab(ui: &mut egui::Ui) {
+    let Some(handle) = bee_cockpit_core::log_capture::cockpit_handle() else {
+        ui.label(
+            egui::RichText::new("(cockpit capture not installed)")
+                .italics()
+                .weak(),
+        );
+        return;
+    };
+    for entry in handle.snapshot().iter() {
+        let level_color = match entry.level.as_str() {
+            "ERROR" => egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
+            "WARN" => egui::Color32::from_rgb(0xe0, 0xb0, 0x30),
+            "INFO" => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
+            "DEBUG" => egui::Color32::GRAY,
+            _ => egui::Color32::GRAY,
+        };
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&entry.ts).monospace().weak());
+            ui.label(
+                egui::RichText::new(&entry.level)
+                    .color(level_color)
+                    .monospace(),
+            );
+            ui.label(egui::RichText::new(&entry.target).monospace().weak());
+            ui.label(egui::RichText::new(&entry.message).monospace());
+        });
+    }
+}
+
+fn draw_bee_log_tab(
+    ui: &mut egui::Ui,
+    bee_logs: &bee_log::BeeLogs,
+    tab: bee_cockpit_core::bee_log::LogTab,
+) {
+    let entries = bee_logs.snapshot(tab);
+    if entries.is_empty() {
+        let hint = match &bee_logs.source {
+            bee_log::ResolvedSource::None { reason } => reason.clone(),
+            _ => String::from("(no entries yet on this tab)"),
+        };
+        ui.label(egui::RichText::new(hint).italics().weak().small());
+        return;
+    }
+    for line in entries.iter() {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(&line.timestamp).monospace().weak());
+            ui.label(egui::RichText::new(&line.logger).monospace().weak());
+            ui.label(egui::RichText::new(&line.message).monospace());
+        });
+    }
 }

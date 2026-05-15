@@ -19,14 +19,15 @@ cockpit logic.
 
 ## Status
 
-**0.8.0** — switch active node from S15 Fleet (Enter on a row
-tears down the BeeWatch hub and rebuilds it against the target
-node). S4 Lottery gains the `rchash` benchmark (`r` times the
-redistribution-sample lookup at the health-derived depth).
-Earlier capabilities — navigation parity (v0.7), palette verbs
-(v0.5/v0.6), webhook + desktop notifications, GSOC + pubsub
-history, theme presets, cargo-dist installers, full `--once`
-surface — remain.
+**0.9.0** — external Bee log tailing. `--bee-log <path>` /
+`--bee-log-cmd <cmd>` (or `[bee] log_file` / `log_command` in
+config) pipe Bee's own log output into a new tabbed bottom pane
+alongside the existing `bee::http` tail; auto-discovery on Linux
+walks `/proc` for the Bee process behind the active node URL.
+Earlier capabilities — switch active node (v0.8), `rchash` bench
+(v0.8), navigation parity (v0.7), palette verbs (v0.5/v0.6),
+webhook + desktop notifications, GSOC + pubsub history, theme
+presets, cargo-dist installers, full `--once` surface — remain.
 
 | Screen | State |
 |---|---|
@@ -73,6 +74,8 @@ beegui --token <bearer>           # restricted-mode auth
 beegui --config ~/beegui.toml     # explicit config file
 beegui --theme light              # auto | light | dark
 beegui http://a:1633 http://b:1633  # positional URLs (ad-hoc fleet)
+beegui --bee-log /var/log/bee.log   # tail a Bee log file
+beegui --bee-log-cmd "journalctl -u bee -f"   # …or a command's stdout
 ```
 
 Environment overrides: `BEE_NODE_URL`, `BEE_NODE_TOKEN`,
@@ -94,6 +97,12 @@ default = true
 name = "remote"
 url = "http://bee.example.com:1633"
 token = "@env:BEE_TOKEN"
+log_command = "ssh bee-host 'tail -f /var/log/bee.log'"
+
+[[nodes]]
+name = "supervised"
+url = "http://localhost:1733"
+log_file = "/var/log/bee/bee.log"
 
 [alerts]
 webhook_url = "https://hooks.slack.com/services/…"

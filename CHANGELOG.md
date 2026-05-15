@@ -11,6 +11,54 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.9.0] - 2026-05-15
+
+The "external Bee logs" release. bee-tui has been tailing the Bee
+process's own log output since v1.15; beegui catches up by reusing
+the same `bee-cockpit-core` plumbing.
+
+### Added
+
+- **`--bee-log <PATH>` CLI flag.** Tail a Bee log file directly.
+  Starts at EOF so pre-existing history doesn't replay; survives
+  log rotation (`logrotate`-style inode swaps) and truncation.
+- **`--bee-log-cmd <CMD>` CLI flag.** Tail a shell command's
+  stdout — `journalctl -u bee -f`, `docker logs -f bee`,
+  `ssh host 'tail -f /var/log/bee.log'` — for nodes whose log
+  isn't a plain file the cockpit can read.
+- **`[bee] log_file` / `log_command` config.** Per-node defaults
+  (same TOML schema as bee-tui's `[[nodes]]`); CLI flags
+  override.
+- **Auto-discovery (Linux, local nodes).** When no explicit
+  source is configured, beegui walks `/proc` to find the Bee
+  process behind the active node URL and picks the right
+  source: regular file → tail directly; pipe under docker →
+  `docker logs -f`; pipe under systemd → `journalctl -u …`.
+  Non-Linux hosts and remote URLs fall through to the
+  no-source placeholder.
+- **Tabbed log pane.** The bottom log pane (Ctrl+L) now has 7
+  tabs matching bee-tui's: Errors / Warn / Info / Debug /
+  Bee HTTP (from the Bee tailer) plus the existing bee::http
+  tab (the cockpit's outbound calls — was the only tab in
+  v0.8) and a Cockpit tab surfacing the cockpit's own
+  tracing events. Tab entry counts surface in the strip.
+- **Source label.** The pane header shows the resolved source
+  + its origin (`CLI` / `config` / `discovered`) so operators
+  understand whether the Bee-side tabs are empty for a
+  configurable reason.
+- **Switches re-resolve.** Changing the active node from S15
+  Fleet kills the old tailer and re-resolves discovery /
+  config against the new node, so the Bee-side tabs always
+  reflect the currently selected node's process.
+
+### Internal
+
+- New `src/bee_log.rs` module owns the per-tab ring buffers
+  (1000 lines/tab) and the source-resolution priority chain
+  (CLI > config > discovery). The tailer itself lives in
+  `bee_cockpit_core::bee_log_tailer` — beegui only adds the
+  egui rendering + the CLI plumbing.
+
 ## [0.8.1] - 2026-05-15
 
 Documentation patch. The in-app help overlay and README "Keys"
