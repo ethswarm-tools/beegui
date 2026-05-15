@@ -17,6 +17,7 @@ pub struct DrawContext<'a> {
     pub api: Arc<ApiClient>,
     pub rt: Handle,
     pub fleet_rx: Option<&'a watch::Receiver<FleetSnapshot>>,
+    pub fleet_resync: Option<&'a tokio::sync::mpsc::UnboundedSender<()>>,
     pub log_capture: &'a LogCapture,
 }
 
@@ -120,7 +121,7 @@ pub fn draw(
         Screen::Network => network::draw(ui, watch),
         Screen::ApiHealth => api_health::draw(ui, watch, ctx.url, ctx.log_capture),
         Screen::Tags => tags::draw(ui, watch, &mut state.tags),
-        Screen::Pins => pins::draw(ui, watch, &mut state.pins),
+        Screen::Pins => pins::draw(ui, watch, &mut state.pins, ctx.api.clone(), &ctx.rt),
         Screen::Manifest => manifest::draw(ui, &mut state.manifest, ctx.api.clone(), &ctx.rt),
         Screen::Watchlist => {
             watchlist::draw(ui, &mut state.watchlist, ctx.api.clone(), &ctx.rt)
@@ -129,6 +130,12 @@ pub fn draw(
             feed_timeline::draw(ui, &mut state.feed_timeline, ctx.api.clone(), &ctx.rt)
         }
         Screen::Pubsub => pubsub::draw(ui, &mut state.pubsub, ctx.api.clone(), &ctx.rt),
-        Screen::Fleet => fleet::draw(ui, ctx.fleet_rx, ctx.active_name, &mut state.fleet),
+        Screen::Fleet => fleet::draw(
+            ui,
+            ctx.fleet_rx,
+            ctx.fleet_resync,
+            ctx.active_name,
+            &mut state.fleet,
+        ),
     }
 }

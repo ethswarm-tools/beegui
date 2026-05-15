@@ -4,7 +4,7 @@
 
 use bee_cockpit_core::fleet::{FleetSnapshot, FleetStatus};
 use bee_cockpit_core::views::fleet::{FleetRowView, FleetView, view_for};
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 #[derive(Default)]
 pub struct FleetScreenState {
@@ -23,6 +23,7 @@ fn status_color(s: FleetStatus) -> egui::Color32 {
 pub fn draw(
     ui: &mut egui::Ui,
     rx: Option<&watch::Receiver<FleetSnapshot>>,
+    resync: Option<&mpsc::UnboundedSender<()>>,
     active_name: &str,
     state: &mut FleetScreenState,
 ) {
@@ -50,23 +51,65 @@ pub fn draw(
 
     let n = view.rows.len();
     if !ui.ctx().memory(|m| m.focused().is_some()) {
+        let mut up = false;
+        let mut down = false;
+        let mut page_up = false;
+        let mut page_down = false;
+        let mut repoll = false;
         ui.input(|i| {
             if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
-                state.selected = state.selected.saturating_sub(1);
+                up = true;
             }
-            if (i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J))
-                && state.selected + 1 < n
-            {
-                state.selected += 1;
+            if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J) {
+                down = true;
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                page_up = true;
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                page_down = true;
+            }
+            if i.key_pressed(egui::Key::R) {
+                repoll = true;
             }
         });
+        if up {
+            state.selected = state.selected.saturating_sub(1);
+        }
+        if down && state.selected + 1 < n {
+            state.selected += 1;
+        }
+        if page_up {
+            state.selected = state.selected.saturating_sub(10);
+        }
+        if page_down {
+            state.selected = (state.selected + 10).min(n.saturating_sub(1));
+        }
+        if repoll
+            && let Some(tx) = resync
+        {
+            let _ = tx.send(());
+        }
     }
     if state.selected >= n.max(1) {
         state.selected = n.saturating_sub(1);
     }
 
     draw_header(ui, &view);
-    ui.add_space(8.0);
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if let Some(tx) = resync
+            && ui.button("Re-poll all").on_hover_text("r").clicked()
+        {
+            let _ = tx.send(());
+        }
+        ui.label(
+            egui::RichText::new("↑/↓ select  ·  PgUp/PgDn  ·  r re-poll")
+                .weak()
+                .small(),
+        );
+    });
+    ui.add_space(4.0);
     draw_rows(ui, &view.rows, &mut state.selected);
 }
 

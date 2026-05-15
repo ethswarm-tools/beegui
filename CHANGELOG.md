@@ -11,6 +11,35 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.7.1] - 2026-05-15
+
+Bug fix release. Audit after v0.7 surfaced four more interaction
+gaps vs bee-tui; all four are addressed here.
+
+### Fixed
+
+- **S10 Pins** — `Enter` (or click) now runs an integrity check
+  on the highlighted pin; `c` checks all pins; `s` cycles the
+  sort mode (Reference → BadFirst → TotalChunks). Previously
+  every pin sat at "unchecked" forever because the check
+  pipeline wasn't wired up.
+- **S11 Manifest** — `↑/↓/j/k` navigates the tree; `Enter`
+  expands/collapses the highlighted fork. Previously only
+  mouse click worked.
+- **S15 Fleet** — `r` re-polls every node (kicks the
+  `spawn_poller` resync channel). New *Re-poll all* button in
+  the screen header does the same.
+- **Paging** — `PageUp` / `PageDown` (±10) and `Home` / `End`
+  added to every list-based screen: tags, pins, peers, stamps,
+  watchlist, feed-timeline, pubsub, fleet, manifest.
+
+### Notes
+
+- Switching the *active* node from Fleet (bee-tui's
+  `Enter → SwitchContext`) is still on the v0.8 backlog —
+  tearing down + restarting the BeeWatch hub for a different
+  endpoint is a bigger refactor than this patch deserves.
+
 ## [0.7.0] - 2026-05-15
 
 The "navigation parity" release. Fixes the bug where clicking a

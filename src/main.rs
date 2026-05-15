@@ -120,16 +120,16 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
     };
     let rt_handle = runtime.handle().clone();
     let rt_handle_clone = rt_handle.clone();
-    let fleet_rx = if resolved.all.len() > 1 {
+    let (fleet_rx, fleet_resync) = if resolved.all.len() > 1 {
         let _guard = runtime.enter();
-        let (rx, _resync) = spawn_poller(
+        let (rx, resync) = spawn_poller(
             resolved.all.clone(),
             cancel.child_token(),
             FLEET_POLL_INTERVAL,
         );
-        Some(rx)
+        (Some(rx), Some(resync))
     } else {
-        None
+        (None, None)
     };
 
     let app = App {
@@ -139,6 +139,7 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         rt_handle,
         watch,
         fleet_rx,
+        fleet_resync,
         log_capture,
         log_pane_open: false,
         alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
@@ -332,6 +333,7 @@ struct App {
     rt_handle: tokio::runtime::Handle,
     watch: BeeWatch,
     fleet_rx: Option<watch::Receiver<FleetSnapshot>>,
+    fleet_resync: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     log_capture: LogCapture,
     log_pane_open: bool,
     alerts: alerts::AlertsPipeline,
@@ -498,6 +500,7 @@ impl eframe::App for App {
                     api: self.api.clone(),
                     rt: self.rt_handle.clone(),
                     fleet_rx: self.fleet_rx.as_ref(),
+                    fleet_resync: self.fleet_resync.as_ref(),
                     log_capture: &self.log_capture,
                 },
             );

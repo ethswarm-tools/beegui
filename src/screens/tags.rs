@@ -49,6 +49,18 @@ fn arrow_nav(ui: &mut egui::Ui, selected: &mut usize, n: usize) {
         {
             *selected += 1;
         }
+        if i.key_pressed(egui::Key::PageUp) {
+            *selected = selected.saturating_sub(10);
+        }
+        if i.key_pressed(egui::Key::PageDown) {
+            *selected = (*selected + 10).min(n.saturating_sub(1));
+        }
+        if i.key_pressed(egui::Key::Home) {
+            *selected = 0;
+        }
+        if i.key_pressed(egui::Key::End) && n > 0 {
+            *selected = n - 1;
+        }
     });
     if *selected >= n.max(1) {
         *selected = n.saturating_sub(1);

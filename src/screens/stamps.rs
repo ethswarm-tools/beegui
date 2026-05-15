@@ -115,6 +115,10 @@ fn handle_keys(
     let n = rows.len();
     let mut up = false;
     let mut down = false;
+    let mut page_up = false;
+    let mut page_down = false;
+    let mut home = false;
+    let mut end = false;
     let mut enter = false;
     let mut esc = false;
     ui.input(|i| {
@@ -123,6 +127,18 @@ fn handle_keys(
         }
         if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J) {
             down = true;
+        }
+        if i.key_pressed(egui::Key::PageUp) {
+            page_up = true;
+        }
+        if i.key_pressed(egui::Key::PageDown) {
+            page_down = true;
+        }
+        if i.key_pressed(egui::Key::Home) {
+            home = true;
+        }
+        if i.key_pressed(egui::Key::End) {
+            end = true;
         }
         if i.key_pressed(egui::Key::Enter) {
             enter = true;
@@ -140,6 +156,18 @@ fn handle_keys(
     }
     if down && n > 0 && state.selected + 1 < n {
         state.selected += 1;
+    }
+    if page_up {
+        state.selected = state.selected.saturating_sub(10);
+    }
+    if page_down {
+        state.selected = (state.selected + 10).min(n.saturating_sub(1));
+    }
+    if home {
+        state.selected = 0;
+    }
+    if end && n > 0 {
+        state.selected = n - 1;
     }
     if enter && n > 0 {
         start_drill(state, snap, api, rt);

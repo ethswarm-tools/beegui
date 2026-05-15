@@ -117,6 +117,18 @@ pub fn draw(ui: &mut egui::Ui, state: &mut WatchlistState, api: Arc<ApiClient>, 
             {
                 state.selected += 1;
             }
+            if i.key_pressed(egui::Key::PageUp) {
+                state.selected = state.selected.saturating_sub(10);
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                state.selected = (state.selected + 10).min(n.saturating_sub(1));
+            }
+            if i.key_pressed(egui::Key::Home) {
+                state.selected = 0;
+            }
+            if i.key_pressed(egui::Key::End) && n > 0 {
+                state.selected = n - 1;
+            }
         });
     }
     if state.selected >= n.max(1) {

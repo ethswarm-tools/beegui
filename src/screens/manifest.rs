@@ -22,6 +22,7 @@ pub struct ManifestState {
     expanded: HashSet<[u8; 32]>,
     inflight_root: bool,
     inflight_forks: HashSet<[u8; 32]>,
+    selected: usize,
     incoming: mpsc::UnboundedReceiver<WalkResult>,
     incoming_tx: mpsc::UnboundedSender<WalkResult>,
 }
@@ -43,6 +44,7 @@ impl Default for ManifestState {
             expanded: HashSet::new(),
             inflight_root: false,
             inflight_forks: HashSet::new(),
+            selected: 0,
             incoming: rx,
             incoming_tx: tx,
         }
@@ -95,43 +97,108 @@ pub fn draw(ui: &mut egui::Ui, state: &mut ManifestState, api: Arc<ApiClient>, r
         return;
     }
 
-    let mut toggles: Vec<[u8; 32]> = Vec::new();
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for row in &view.rows {
-            let clicked = draw_row(ui, row);
-            if clicked
-                && row.has_children
+    let n = view.rows.len();
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        let mut up = false;
+        let mut down = false;
+        let mut page_up = false;
+        let mut page_down = false;
+        let mut enter = false;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
+                up = true;
+            }
+            if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::J) {
+                down = true;
+            }
+            if i.key_pressed(egui::Key::PageUp) {
+                page_up = true;
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                page_down = true;
+            }
+            if i.key_pressed(egui::Key::Enter) {
+                enter = true;
+            }
+        });
+        if up {
+            state.selected = state.selected.saturating_sub(1);
+        }
+        if down && state.selected + 1 < n {
+            state.selected += 1;
+        }
+        if page_up {
+            state.selected = state.selected.saturating_sub(10);
+        }
+        if page_down {
+            state.selected = (state.selected + 10).min(n.saturating_sub(1));
+        }
+        if enter && state.selected < n {
+            let row = &view.rows[state.selected];
+            if row.has_children
                 && let Some(hex) = &row.self_addr_hex
                 && let Ok(addr) = parse_hex_32(hex)
             {
-                toggles.push(addr);
+                toggle_fork(state, addr, &api, rt);
+            }
+        }
+    }
+    if state.selected >= n {
+        state.selected = n.saturating_sub(1);
+    }
+
+    let mut toggles: Vec<[u8; 32]> = Vec::new();
+    let mut new_selected: Option<usize> = None;
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for (i, row) in view.rows.iter().enumerate() {
+            let clicked = draw_row(ui, row, i == state.selected);
+            if clicked {
+                new_selected = Some(i);
+                if row.has_children
+                    && let Some(hex) = &row.self_addr_hex
+                    && let Ok(addr) = parse_hex_32(hex)
+                {
+                    toggles.push(addr);
+                }
             }
         }
     });
+    if let Some(i) = new_selected {
+        state.selected = i;
+    }
     for addr in toggles {
         toggle_fork(state, addr, &api, rt);
     }
 }
 
-fn draw_row(ui: &mut egui::Ui, row: &TreeRow) -> bool {
+fn draw_row(ui: &mut egui::Ui, row: &TreeRow, selected: bool) -> bool {
     let indent = row.depth as f32 * 16.0;
+    let bg = if selected {
+        egui::Color32::from_rgb(0x3a, 0x6a, 0x9c)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let mut frame = egui::Frame::none().fill(bg);
+    frame.inner_margin = egui::Margin::symmetric(2.0, 1.0);
     let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.add_space(indent);
-        let label = format!("{}  {}", row.glyph, row.label);
-        let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-        if resp.clicked() {
-            clicked = true;
-        }
-        if let Some(ct) = &row.content_type {
-            ui.label(egui::RichText::new(ct).weak().small());
-        }
-        if let Some(hint) = &row.state_hint {
-            ui.label(egui::RichText::new(hint).italics().weak().small());
-        }
-        if let Some(t) = &row.target_ref_hex {
-            ui.label(egui::RichText::new(t).monospace().weak().small());
-        }
+    frame.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let label = format!("{}  {}", row.glyph, row.label);
+            let resp = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+            if resp.clicked() {
+                clicked = true;
+            }
+            if let Some(ct) = &row.content_type {
+                ui.label(egui::RichText::new(ct).weak().small());
+            }
+            if let Some(hint) = &row.state_hint {
+                ui.label(egui::RichText::new(hint).italics().weak().small());
+            }
+            if let Some(t) = &row.target_ref_hex {
+                ui.label(egui::RichText::new(t).monospace().weak().small());
+            }
+        });
     });
     clicked
 }

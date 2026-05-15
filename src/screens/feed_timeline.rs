@@ -129,6 +129,18 @@ pub fn draw(ui: &mut egui::Ui, state: &mut FeedTimelineState, api: Arc<ApiClient
             {
                 state.selected += 1;
             }
+            if i.key_pressed(egui::Key::PageUp) {
+                state.selected = state.selected.saturating_sub(10);
+            }
+            if i.key_pressed(egui::Key::PageDown) {
+                state.selected = (state.selected + 10).min(row_count.saturating_sub(1));
+            }
+            if i.key_pressed(egui::Key::Home) {
+                state.selected = 0;
+            }
+            if i.key_pressed(egui::Key::End) && row_count > 0 {
+                state.selected = row_count - 1;
+            }
         });
     }
     if state.selected >= row_count.max(1) {
