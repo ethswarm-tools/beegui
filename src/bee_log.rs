@@ -124,8 +124,18 @@ impl BeeLogs {
     }
 
     /// Tear down the current tailer (the previous `CancellationToken`
-    /// is dropped) and spawn a new one for `source`.
+    /// is dropped) and spawn a new one for `source`. Replaces the
+    /// internal mpsc channel so in-flight messages from the dying
+    /// tailer can't leak into the new rings.
     pub fn respawn(&mut self, source: ResolvedSource, cancel: CancellationToken) {
+        // Fresh channel: any pending sends from the previous tailer
+        // (which received its cancel signal but may have a few lines
+        // still in flight in its 200 ms read loop) go to the dropped
+        // receiver and are discarded — they can't appear in this
+        // node's tabs.
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.tx = tx;
+        self.rx = rx;
         match &source {
             ResolvedSource::File { path, .. } => {
                 bee_log_tailer::spawn(path.clone(), self.tx.clone(), cancel, true);
@@ -135,8 +145,6 @@ impl BeeLogs {
             }
             ResolvedSource::None { .. } => {}
         }
-        // Clear the rings on respawn so stale lines from the
-        // previous node don't bleed into the new node's tabs.
         for ring in &mut self.rings {
             ring.clear();
         }
@@ -383,6 +391,27 @@ mod tests {
             tokio_util::sync::CancellationToken::new(),
         );
         assert_eq!(bl.snapshot(LogTab::Errors).len(), 0);
+    }
+
+    #[test]
+    fn beelogs_respawn_drops_in_flight_messages_from_old_tailer() {
+        // Simulates the race where the old tailer's cancel has fired
+        // but its read loop is still pushing a couple of lines into
+        // the shared tx. With a fresh mpsc per respawn, those lines
+        // must not appear in the new rings.
+        let mut bl = BeeLogs::new();
+        let old_tx = bl.tx.clone();
+        bl.respawn(
+            ResolvedSource::None {
+                reason: "switched".into(),
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        // The old tailer's still-alive send-handle pushes lines
+        // *after* the respawn — these go to the dropped receiver.
+        let _ = old_tx.send((LogTab::Info, mk_line("stale-after-switch")));
+        bl.drain();
+        assert_eq!(bl.snapshot(LogTab::Info).len(), 0);
     }
 
     #[test]

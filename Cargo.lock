@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "beegui"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "bee-cockpit-core",
  "bee-rs",

@@ -19,6 +19,7 @@ pub struct DrawContext<'a> {
     pub fleet_rx: Option<&'a watch::Receiver<FleetSnapshot>>,
     pub fleet_resync: Option<&'a tokio::sync::mpsc::UnboundedSender<()>>,
     pub log_capture: &'a LogCapture,
+    pub watch_cancel: &'a tokio_util::sync::CancellationToken,
 }
 
 pub mod api_health;
@@ -139,7 +140,13 @@ pub fn draw(
         Screen::FeedTimeline => {
             feed_timeline::draw(ui, &mut state.feed_timeline, ctx.api.clone(), &ctx.rt)
         }
-        Screen::Pubsub => pubsub::draw(ui, &mut state.pubsub, ctx.api.clone(), &ctx.rt),
+        Screen::Pubsub => pubsub::draw(
+            ui,
+            &mut state.pubsub,
+            ctx.api.clone(),
+            &ctx.rt,
+            ctx.watch_cancel,
+        ),
         Screen::Fleet => {
             outcome.switch_to_node = fleet::draw(
                 ui,

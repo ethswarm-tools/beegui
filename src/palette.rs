@@ -296,11 +296,13 @@ impl Palette {
         api: Arc<ApiClient>,
         rt: &Handle,
     ) -> Vec<PaletteAction> {
-        let mut parts = line.split_whitespace();
-        let Some(verb) = parts.next() else {
+        let tokens = tokenize(line);
+        let Some(verb) = tokens.first().cloned() else {
             return Vec::new();
         };
-        let args: Vec<&str> = parts.collect();
+        let args_owned: Vec<String> = tokens.into_iter().skip(1).collect();
+        let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+        let verb = verb.as_str();
         match verb {
             "go" | "g" => self.verb_go(&args),
             "health" | "stamps" | "swap" | "lottery" | "warmup" | "peers" | "network"
@@ -738,6 +740,60 @@ async fn run_upload_dir(
             when: Instant::now(),
         },
     }
+}
+
+/// Split a palette input line into tokens, respecting single and
+/// double quotes so `:upload "/My Docs/file.txt"` is one path token
+/// (not three). Backslash escapes the next character inside a quoted
+/// string. Unclosed quotes are tolerated: the remainder of the line
+/// becomes the final token so an in-progress edit doesn't error.
+fn tokenize(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_single {
+            if c == '\'' {
+                in_single = false;
+            } else {
+                cur.push(c);
+            }
+            continue;
+        }
+        if in_double {
+            if c == '"' {
+                in_double = false;
+            } else if c == '\\' {
+                if let Some(next) = chars.next() {
+                    cur.push(next);
+                }
+            } else {
+                cur.push(c);
+            }
+            continue;
+        }
+        match c {
+            '\'' => in_single = true,
+            '"' => in_double = true,
+            '\\' => {
+                if let Some(next) = chars.next() {
+                    cur.push(next);
+                }
+            }
+            c if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 fn pick_batch<'a>(
@@ -1217,6 +1273,56 @@ mod tests {
         let mut p = p();
         assert!(p.verb_feed_timeline(&[]).is_empty());
         assert!(p.verb_feed_timeline(&["only-owner"]).is_empty());
+    }
+
+    #[test]
+    fn tokenize_simple() {
+        assert_eq!(tokenize("upload /tmp/x"), vec!["upload", "/tmp/x"]);
+    }
+
+    #[test]
+    fn tokenize_double_quoted_preserves_spaces() {
+        assert_eq!(
+            tokenize(r#"upload "/My Docs/file.txt""#),
+            vec!["upload", "/My Docs/file.txt"]
+        );
+    }
+
+    #[test]
+    fn tokenize_single_quoted_preserves_spaces() {
+        assert_eq!(
+            tokenize("pss 0xtopic 'hello world'"),
+            vec!["pss", "0xtopic", "hello world"]
+        );
+    }
+
+    #[test]
+    fn tokenize_backslash_escape_outside_quotes() {
+        assert_eq!(
+            tokenize(r"upload /My\ Docs/file.txt"),
+            vec!["upload", "/My Docs/file.txt"]
+        );
+    }
+
+    #[test]
+    fn tokenize_unclosed_quote_swallows_remainder() {
+        // An in-progress edit shouldn't error; treat the unclosed
+        // tail as one token.
+        assert_eq!(
+            tokenize(r#"upload "/half-typed path"#),
+            vec!["upload", "/half-typed path"]
+        );
+    }
+
+    #[test]
+    fn tokenize_empty_returns_empty() {
+        assert!(tokenize("").is_empty());
+        assert!(tokenize("   ").is_empty());
+    }
+
+    #[test]
+    fn tokenize_multiple_spaces_collapse() {
+        assert_eq!(tokenize("a    b\tc"), vec!["a", "b", "c"]);
     }
 
     #[test]

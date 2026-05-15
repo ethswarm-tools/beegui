@@ -193,6 +193,14 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
 
     let bee_log_cli_file = cli.bee_log.clone();
     let bee_log_cli_cmd = cli.bee_log_cmd.clone();
+    if supervisor.is_some()
+        && (bee_log_cli_file.is_some() || bee_log_cli_cmd.is_some())
+    {
+        eprintln!(
+            "beegui: --bee-log/--bee-log-cmd ignored because --bee-bin is set; \
+             the supervisor's log file is the freshest source"
+        );
+    }
     let mut bee_logs = bee_log::BeeLogs::new();
     {
         let _guard = runtime.enter();
@@ -228,6 +236,7 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         fleet_rx,
         fleet_resync,
         log_capture,
+        pending_quit: false,
         log_pane_open: false,
         log_pane_tab: bee_cockpit_core::bee_log::LogTab::SelfHttp,
         bee_logs,
@@ -295,6 +304,13 @@ impl Theme {
     }
 }
 
+fn no_color_env() -> bool {
+    // Per no-color.org: presence is what matters; any non-empty
+    // value (including "0", "false") should force the colorless
+    // path. Operators set NO_COLOR=1 by convention.
+    std::env::var_os("NO_COLOR").map(|v| !v.is_empty()).unwrap_or(false)
+}
+
 fn default_visuals(ctx: &egui::Context) -> egui::Visuals {
     match ctx.style().visuals.dark_mode {
         true => egui::Visuals::dark(),
@@ -333,12 +349,18 @@ fn resolve_nodes(cli: &Cli) -> color_eyre::Result<Resolved> {
         .as_ref()
         .map(|c| c.notifications.clone())
         .unwrap_or_default();
-    let theme = cli
-        .theme
-        .as_deref()
-        .and_then(Theme::parse)
-        .or_else(|| cfg.as_ref().and_then(|c| Theme::parse(&c.ui.theme)))
-        .unwrap_or(Theme::Auto);
+    // NO_COLOR=1 wins over the CLI flag and config (the env is the
+    // operator's "I have a strict policy about this" signal — same
+    // semantics as bee-tui and the no-color.org spec).
+    let theme = if no_color_env() {
+        Theme::Dark
+    } else {
+        cli.theme
+            .as_deref()
+            .and_then(Theme::parse)
+            .or_else(|| cfg.as_ref().and_then(|c| Theme::parse(&c.ui.theme)))
+            .unwrap_or(Theme::Auto)
+    };
     let bee = cfg.as_ref().and_then(|c| c.bee.clone());
 
     if let Some(url) = &cli.node {
@@ -457,6 +479,7 @@ struct App {
     fleet_rx: Option<watch::Receiver<FleetSnapshot>>,
     fleet_resync: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     log_capture: LogCapture,
+    pending_quit: bool,
     log_pane_open: bool,
     log_pane_tab: bee_cockpit_core::bee_log::LogTab,
     bee_logs: bee_log::BeeLogs,
@@ -653,6 +676,7 @@ impl eframe::App for App {
                     fleet_rx: self.fleet_rx.as_ref(),
                     fleet_resync: self.fleet_resync.as_ref(),
                     log_capture: &self.log_capture,
+                    watch_cancel: &self.watch_cancel,
                 },
             );
             screen_outcome = Some(out);
@@ -683,6 +707,9 @@ impl eframe::App for App {
             && let Some(name) = out.switch_to_node
         {
             self.switch_active_node(&name);
+        }
+        if self.pending_quit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -817,9 +844,23 @@ impl App {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        if let Some(path) = dropped.into_iter().next() {
-            self.palette.open();
-            self.palette.input = format!(":upload {}", path.display());
+        if dropped.is_empty() {
+            return;
+        }
+        let first = dropped[0].clone();
+        let extra = dropped.len() - 1;
+        // Always quote — paths with spaces would otherwise be split
+        // by the palette's whitespace tokenizer.
+        self.palette.open();
+        self.palette.input = format!(":upload {:?}", first.display().to_string());
+        if extra > 0 {
+            self.palette.set_banner(
+                palette::BannerLevel::Err,
+                format!(
+                    "{extra} additional file{s} ignored — drop one at a time",
+                    s = if extra == 1 { "" } else { "s" }
+                ),
+            );
         }
     }
 
@@ -886,6 +927,18 @@ impl App {
             let _guard = self.rt_handle.enter();
             self.bee_logs.respawn(source, new_cancel);
         }
+        // Drop node-bound screen state: drill panels showing the old
+        // node's bucket histograms, the old node's loaded Mantaray
+        // tree, the old node's peer drill, etc. Watchlist state is
+        // reference-keyed and node-agnostic, so we *don't* reset it.
+        self.state.stamps = screens::stamps::StampsScreenState::default();
+        self.state.peers = screens::peers::PeersScreenState::default();
+        self.state.pins = screens::pins::PinsScreenState::default();
+        self.state.manifest = screens::manifest::ManifestState::default();
+        self.state.feed_timeline = screens::feed_timeline::FeedTimelineState::default();
+        self.state.pubsub = screens::pubsub::PubsubState::default();
+        self.state.lottery = screens::lottery::LotteryScreenState::default();
+        self.state.warmup = screens::warmup::WarmupState::default();
         self.palette.set_banner(
             palette::BannerLevel::Ok,
             format!("switched to {} ({})", node.name, node.url),
@@ -1122,7 +1175,13 @@ impl App {
                 }
             }
             palette::PaletteAction::ShowHelp => self.help_open = true,
-            palette::PaletteAction::Quit => std::process::exit(0),
+            // Request a graceful close via the viewport command queue
+            // rather than std::process::exit — eframe's normal close
+            // path then runs on_exit, which is where the supervised
+            // Bee gets a clean SIGTERM. Bypassing on_exit would leave
+            // Bee to be killed by Drop's SIGKILL, skipping the
+            // RocksDB-safe shutdown grace.
+            palette::PaletteAction::Quit => self.pending_quit = true,
             palette::PaletteAction::LoadManifest(r) => {
                 self.state.manifest.load_external(r, &self.api, &self.rt_handle);
             }

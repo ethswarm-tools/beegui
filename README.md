@@ -22,15 +22,13 @@ cockpit logic.
 
 ## Status
 
-**0.12.0** — v1.0 runway. 58 tests (up from 0); mdBook operator
-handbook published to GitHub Pages; stale log-pane labels fixed.
-v0.11's Bee process supervision (`--bee-bin` / `--bee-config`)
-remains; full feature list is in the [handbook][bk].
-Earlier features — `Ctrl+N` picker (v0.10), external Bee log
-tailing (v0.9), switch from Fleet (v0.8), navigation parity
-(v0.7), palette verbs (v0.5/v0.6), webhook + desktop
-notifications, GSOC + pubsub history, theme presets, cargo-dist
-installers, full `--once` surface — remain.
+**0.13.0** — self-audit bug-fix release. Eight defects from a
+deliberate review of the v0.5 → v0.12 feature sprint: `:quit`
+clean Bee shutdown, pubsub cancel hierarchy on node switch,
+shell-style quoting in palette args (`:upload "/My Docs/x"`),
+ScreenState reset on switch, multi-file drag feedback, `NO_COLOR`
+wired, bee-log channel isolation on respawn, `--bee-log` override
+warning. Full feature list in the [handbook][bk].
 
 [bk]: https://ethswarm-tools.github.io/beegui/
 

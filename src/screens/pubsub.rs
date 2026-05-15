@@ -68,7 +68,13 @@ impl Default for PubsubState {
     }
 }
 
-pub fn draw(ui: &mut egui::Ui, state: &mut PubsubState, api: Arc<ApiClient>, rt: &Handle) {
+pub fn draw(
+    ui: &mut egui::Ui,
+    state: &mut PubsubState,
+    api: Arc<ApiClient>,
+    rt: &Handle,
+    watch_cancel: &CancellationToken,
+) {
     drain(state);
 
     ui.horizontal(|ui| {
@@ -96,7 +102,7 @@ pub fn draw(ui: &mut egui::Ui, state: &mut PubsubState, api: Arc<ApiClient>, rt:
                 SubMode::Gsoc => "Subscribe (GSOC)",
             };
             if ui.button(label).clicked() {
-                start(state, &api, rt);
+                start(state, &api, rt, watch_cancel);
             }
         } else if ui.button("Unsubscribe").clicked() {
             stop(state);
@@ -266,7 +272,12 @@ fn draw_row(ui: &mut egui::Ui, row: &PubsubRowView, selected: bool) -> egui::Res
     resp.interact(egui::Sense::click())
 }
 
-fn start(state: &mut PubsubState, api: &Arc<ApiClient>, rt: &Handle) {
+fn start(
+    state: &mut PubsubState,
+    api: &Arc<ApiClient>,
+    rt: &Handle,
+    watch_cancel: &CancellationToken,
+) {
     state.error = None;
     let history_path = if state.history_path_input.trim().is_empty() {
         None
@@ -290,8 +301,8 @@ fn start(state: &mut PubsubState, api: &Arc<ApiClient>, rt: &Handle) {
     };
 
     match state.mode {
-        SubMode::Pss => start_pss(state, api, rt, history, history_path),
-        SubMode::Gsoc => start_gsoc(state, api, rt, history, history_path),
+        SubMode::Pss => start_pss(state, api, rt, history, history_path, watch_cancel),
+        SubMode::Gsoc => start_gsoc(state, api, rt, history, history_path, watch_cancel),
     }
 }
 
@@ -301,6 +312,7 @@ fn start_pss(
     rt: &Handle,
     history: HistoryWriter,
     history_path: Option<PathBuf>,
+    watch_cancel: &CancellationToken,
 ) {
     let trimmed = state.topic_input.trim().trim_start_matches("0x");
     let bytes = match decode_hex(trimmed, 32) {
@@ -320,7 +332,10 @@ fn start_pss(
         }
     };
     let channel = topic.to_hex();
-    let cancel = CancellationToken::new();
+    // Child of watch_cancel so switching the active node tears the
+    // watcher down — otherwise it would keep polling the old API
+    // client forever, invisible to the operator.
+    let cancel = watch_cancel.child_token();
     let tx = state.incoming_tx.clone();
     let api_c = api.clone();
     let cancel_c = cancel.clone();
@@ -343,6 +358,7 @@ fn start_gsoc(
     rt: &Handle,
     history: HistoryWriter,
     history_path: Option<PathBuf>,
+    watch_cancel: &CancellationToken,
 ) {
     let owner_hex = state.owner_input.trim().trim_start_matches("0x");
     let owner_bytes = match decode_hex(owner_hex, 20) {
@@ -379,7 +395,10 @@ fn start_gsoc(
         }
     };
     let channel = format!("{}/{}", owner.to_hex(), identifier.to_hex());
-    let cancel = CancellationToken::new();
+    // Child of watch_cancel so switching the active node tears the
+    // watcher down — otherwise it would keep polling the old API
+    // client forever, invisible to the operator.
+    let cancel = watch_cancel.child_token();
     let tx = state.incoming_tx.clone();
     let api_c = api.clone();
     let cancel_c = cancel.clone();

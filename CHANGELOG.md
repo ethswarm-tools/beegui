@@ -11,6 +11,77 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.13.0] - 2026-05-16
+
+The "self-audit" release. Eight bugs were surfaced by a deliberate
+code review of the v0.5 → v0.12 sprint. None had been reported by
+operators (this is a recently-introduced cockpit); all eight are
+fixed here.
+
+### Fixed
+
+- **`:quit` skipped clean Bee shutdown.** The verb called
+  `std::process::exit(0)` which bypassed eframe's close path and
+  therefore `on_exit`. With `--bee-bin` set, Bee was killed by
+  `Drop`'s SIGKILL fallback instead of the SIGTERM-grace-SIGKILL
+  flow, leaving RocksDB in a recovery-required state on next
+  start. Now routes through `egui::ViewportCommand::Close` so
+  `on_exit` always runs.
+- **Pubsub subscriptions leaked across node switches.**
+  S14 used a freshly-rooted `CancellationToken::new()` instead
+  of a child of `watch_cancel`. After `Ctrl+N` / `:context`,
+  the old PSS/GSOC watcher kept polling the old `ApiClient`
+  forever — invisible to the operator who saw the new node's
+  pane. Now uses `watch_cancel.child_token()`, so the watcher
+  dies with the watch hub.
+- **`:upload` / `:pss` broke on paths/payloads with spaces.**
+  The palette dispatch was `split_whitespace`-based: dropping
+  `/Users/x/My File.txt` (a common macOS path shape) split into
+  three tokens; only `/Users/x/My` was used as the path,
+  producing a confusing "stat: no such file" error. New
+  shell-style tokenizer respects single + double quotes and
+  backslash escapes. Drag-and-drop now wraps the dropped path
+  in `"…"` quoting automatically.
+- **Stale screen state after a node switch.** `switch_active_node`
+  reset `BeeWatch`, alerts, and bee-log rings, but not
+  `ScreenState`: drill panels still showed the old node's
+  bucket histogram, S6 selection could point past the new
+  node's peer list, S11 Manifest showed the old node's
+  Mantaray tree, and forks expanded against the *new* node —
+  mixing data from two nodes in one tree. The fix resets
+  `stamps` / `peers` / `pins` / `manifest` / `feed_timeline` /
+  `pubsub` / `lottery` / `warmup` state; `watchlist` stays
+  intact because it's reference-keyed and node-agnostic.
+- **Multi-file drag-drop silently lost all but the first.**
+  Now surfaces an error banner — *"N additional files ignored
+  — drop one at a time"* — so operators know.
+- **`NO_COLOR=1` was documented but unimplemented.** The
+  handbook listed it as a way to force the colorless scheme,
+  but the env var wasn't read. Wired now: presence (any
+  non-empty value, per no-color.org) forces `Theme::Dark`,
+  overriding `--theme` / `[ui].theme`.
+- **Bee-log lines from the previous node could bleed into the
+  new node's rings.** Cosmetic but real: the shared
+  `mpsc::UnboundedSender` could still contain in-flight messages
+  from the dying old tailer when `respawn` cleared rings. New
+  fix replaces the entire channel on every respawn so any send
+  the old tailer makes after `cancel.cancel()` fires goes to a
+  dropped receiver.
+- **`--bee-log` / `--bee-log-cmd` silently ignored when
+  `--bee-bin` is set.** Documented behavior, but the operator
+  who passed both flags got no feedback that one was preempted.
+  Now prints a startup notice on stderr.
+
+### Internal
+
+- New `tokenize()` in `palette.rs` (shell-like quoting); 8 new
+  tests cover quoting / escapes / unclosed quotes / multiple
+  spaces.
+- New `bee_log` test covers the respawn channel-isolation path
+  (in-flight message from dying tailer must not reach new
+  rings).
+- Test count: 58 → 66.
+
 ## [0.12.0] - 2026-05-16
 
 The "v1.0 runway" release. v0.11 closed the last bee-tui parity
