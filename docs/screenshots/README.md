@@ -8,12 +8,13 @@ from a running session on a real display server.
 
 ## What to capture
 
-The README placeholders (and the recipe below) assume the
-following set. Each one should be captured against a node that
-has interesting data — not a fresh empty node, where every
-screen is "waiting…".
+**Nothing in this directory exists yet** beyond this README —
+the table below is the checklist of captures to produce. Each
+should be recorded against a node that has interesting data
+(stamps, peers, fleet roll-up), not a fresh empty node where
+every screen is "waiting…".
 
-| File | What it shows | Suggested screen |
+| File (to create) | What it shows | Suggested screen |
 |---|---|---|
 | `cold-start.png` | Headline shot: first frame after launch, S1 Health with all gates rendered and the status bar populated. | S1 Health |
 | `s2-stamps.png` | Stamps table with at least 3 batches of varied status; one row selected showing the bucket-histogram drill below. | S2 Stamps |
