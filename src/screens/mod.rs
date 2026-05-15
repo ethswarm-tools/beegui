@@ -49,6 +49,7 @@ pub struct ScreenState {
     pub tags: tags::TagsScreenState,
     pub pins: pins::PinsScreenState,
     pub fleet: fleet::FleetScreenState,
+    pub lottery: lottery::LotteryScreenState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter)]
@@ -104,18 +105,27 @@ impl Screen {
     }
 }
 
+/// Outcome of one frame's screen render that the App needs to act
+/// on. Anything truly local to the screen is handled inside; this
+/// is for cross-cutting actions like "switch active node".
+#[derive(Default)]
+pub struct ScreenOutcome {
+    pub switch_to_node: Option<String>,
+}
+
 pub fn draw(
     screen: Screen,
     ui: &mut egui::Ui,
     watch: &BeeWatch,
     state: &mut ScreenState,
     ctx: DrawContext<'_>,
-) {
+) -> ScreenOutcome {
+    let mut outcome = ScreenOutcome::default();
     match screen {
         Screen::Health => health::draw(ui, watch),
         Screen::Stamps => stamps::draw(ui, watch, &mut state.stamps, ctx.api.clone(), &ctx.rt),
         Screen::Swap => swap::draw(ui, watch),
-        Screen::Lottery => lottery::draw(ui, watch),
+        Screen::Lottery => lottery::draw(ui, watch, &mut state.lottery, ctx.api.clone(), &ctx.rt),
         Screen::Warmup => warmup::draw(ui, watch, &mut state.warmup),
         Screen::Peers => peers::draw(ui, watch, &mut state.peers, ctx.api.clone(), &ctx.rt),
         Screen::Network => network::draw(ui, watch),
@@ -130,12 +140,15 @@ pub fn draw(
             feed_timeline::draw(ui, &mut state.feed_timeline, ctx.api.clone(), &ctx.rt)
         }
         Screen::Pubsub => pubsub::draw(ui, &mut state.pubsub, ctx.api.clone(), &ctx.rt),
-        Screen::Fleet => fleet::draw(
-            ui,
-            ctx.fleet_rx,
-            ctx.fleet_resync,
-            ctx.active_name,
-            &mut state.fleet,
-        ),
+        Screen::Fleet => {
+            outcome.switch_to_node = fleet::draw(
+                ui,
+                ctx.fleet_rx,
+                ctx.fleet_resync,
+                ctx.active_name,
+                &mut state.fleet,
+            );
+        }
     }
+    outcome
 }

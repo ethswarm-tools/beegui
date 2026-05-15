@@ -19,30 +19,32 @@ cockpit logic.
 
 ## Status
 
-**0.7.0** — navigation parity. Click any list row to select it;
-arrow keys (or j/k) navigate. S6 Peers and S2 Stamps gain
-their bee-tui drill panels (peer details / bucket histogram).
-Earlier capabilities — palette verbs (v0.5/v0.6), webhook +
-desktop notifications, GSOC + pubsub history, theme presets,
-cargo-dist installers, full `--once` surface — remain.
+**0.8.0** — switch active node from S15 Fleet (Enter on a row
+tears down the BeeWatch hub and rebuilds it against the target
+node). S4 Lottery gains the `rchash` benchmark (`r` times the
+redistribution-sample lookup at the health-derived depth).
+Earlier capabilities — navigation parity (v0.7), palette verbs
+(v0.5/v0.6), webhook + desktop notifications, GSOC + pubsub
+history, theme presets, cargo-dist installers, full `--once`
+surface — remain.
 
 | Screen | State |
 |---|---|
 | S1 Health | gates + Stamp TTL |
-| S2 Stamps | table + status |
+| S2 Stamps | table + status + bucket-histogram drill |
 | S3 Swap | chequebook + cheques + settlements |
-| S4 Lottery | round + anchors + stake |
+| S4 Lottery | round + anchors + stake + `rchash` bench |
 | S5 Warmup | checklist + elapsed + progress bars |
-| S6 Peers | bin strip + peer table |
+| S6 Peers | bin strip + peer table + drill |
 | S7 Network | identity + reachability + underlays |
 | S8 API Health | chain + pending tx + HTTP call-stats |
 | S9 Tags | progress + counts |
-| S10 Pins | list with check states |
+| S10 Pins | list + check pipeline + sort |
 | S11 Manifest | paste root ref → lazy fork walker |
 | S12 Watchlist | per-ref durability worker + history |
 | S13 Feed Timeline | owner+topic walker |
 | S14 Pubsub | PSS subscriber + ring buffer + filter |
-| S15 Fleet | multi-node poller + aggregate roll-up |
+| S15 Fleet | multi-node poller + roll-up + switch active |
 
 ## Install
 

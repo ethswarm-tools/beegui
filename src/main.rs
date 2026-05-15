@@ -114,9 +114,10 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
     let active = resolved.active.clone();
     let url = active.url.clone();
     let api = Arc::new(ApiClient::from_node(&active)?);
+    let watch_cancel = cancel.child_token();
     let watch = {
         let _guard = runtime.enter();
-        BeeWatch::start(api.clone(), &cancel)
+        BeeWatch::start(api.clone(), &watch_cancel)
     };
     let rt_handle = runtime.handle().clone();
     let rt_handle_clone = rt_handle.clone();
@@ -137,11 +138,16 @@ fn main() -> Result<std::process::ExitCode, color_eyre::Report> {
         active_name: active.name,
         api,
         rt_handle,
+        nodes: resolved.all,
+        cancel: cancel.clone(),
+        watch_cancel,
         watch,
         fleet_rx,
         fleet_resync,
         log_capture,
         log_pane_open: false,
+        alerts_cfg: alerts_cfg.clone(),
+        notif_cfg: notif_cfg.clone(),
         alerts: alerts::AlertsPipeline::new(alerts_cfg, notif_cfg, Some(rt_handle_clone)),
         alerts_open: false,
         palette: palette::Palette::default(),
@@ -331,11 +337,16 @@ struct App {
     active_name: String,
     api: Arc<ApiClient>,
     rt_handle: tokio::runtime::Handle,
+    nodes: Vec<NodeConfig>,
+    cancel: CancellationToken,
+    watch_cancel: CancellationToken,
     watch: BeeWatch,
     fleet_rx: Option<watch::Receiver<FleetSnapshot>>,
     fleet_resync: Option<tokio::sync::mpsc::UnboundedSender<()>>,
     log_capture: LogCapture,
     log_pane_open: bool,
+    alerts_cfg: AlertsConfig,
+    notif_cfg: NotificationsConfig,
     alerts: alerts::AlertsPipeline,
     alerts_open: bool,
     palette: palette::Palette,
@@ -488,8 +499,9 @@ impl eframe::App for App {
             }
         }
 
+        let mut screen_outcome = None;
         egui::CentralPanel::default().show(ctx, |ui| {
-            screens::draw(
+            let out = screens::draw(
                 self.screen,
                 ui,
                 &self.watch,
@@ -504,6 +516,7 @@ impl eframe::App for App {
                     log_capture: &self.log_capture,
                 },
             );
+            screen_outcome = Some(out);
             if let Some(banner) = self.palette.banner().cloned() {
                 let painter = ui.painter();
                 let rect = ui.max_rect();
@@ -525,6 +538,12 @@ impl eframe::App for App {
 
         self.draw_palette(ctx);
         self.draw_help(ctx);
+
+        if let Some(out) = screen_outcome
+            && let Some(name) = out.switch_to_node
+        {
+            self.switch_active_node(&name);
+        }
     }
 }
 
@@ -648,6 +667,56 @@ impl App {
         let stamps = self.watch.stamps().borrow().clone();
         let gates = gates_for_with_stamps(&health, Some(&topology), Some(&stamps));
         self.alerts.observe(&gates);
+    }
+
+    /// Tear down the current BeeWatch and rebuild it against the
+    /// supplied node profile. Called by the Fleet screen when the
+    /// operator Enters a row. Mirrors bee-tui's `SwitchContext`.
+    fn switch_active_node(&mut self, name: &str) {
+        let Some(node) = self.nodes.iter().find(|n| n.name == name).cloned() else {
+            self.palette
+                .set_banner(palette::BannerLevel::Err, format!("no node named {name:?}"));
+            return;
+        };
+        if node.name == self.active_name {
+            return;
+        }
+        let api = match ApiClient::from_node(&node) {
+            Ok(a) => Arc::new(a),
+            Err(e) => {
+                self.palette.set_banner(
+                    palette::BannerLevel::Err,
+                    format!("switch {name}: {e}"),
+                );
+                return;
+            }
+        };
+        // Cancel the existing watch and spawn a fresh one against the
+        // new endpoint. The old pollers wind down on their own; the
+        // log-capture ring is kept (operators may want to inspect the
+        // last few calls to the previous node).
+        self.watch_cancel.cancel();
+        let new_cancel = self.cancel.child_token();
+        let watch = {
+            let _guard = self.rt_handle.enter();
+            BeeWatch::start(api.clone(), &new_cancel)
+        };
+        self.api = api;
+        self.url = node.url.clone();
+        self.active_name = node.name.clone();
+        self.watch_cancel = new_cancel;
+        self.watch = watch;
+        // Reset alerts state so the first frame's "Unknown → X"
+        // transitions don't fire as bogus recoveries.
+        self.alerts = alerts::AlertsPipeline::new(
+            self.alerts_cfg.clone(),
+            self.notif_cfg.clone(),
+            Some(self.rt_handle.clone()),
+        );
+        self.palette.set_banner(
+            palette::BannerLevel::Ok,
+            format!("switched to {} ({})", node.name, node.url),
+        );
     }
 
     fn draw_palette(&mut self, ctx: &egui::Context) {

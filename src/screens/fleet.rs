@@ -20,13 +20,15 @@ fn status_color(s: FleetStatus) -> egui::Color32 {
     }
 }
 
+/// Returns `Some(node_name)` when the operator asked to switch the
+/// active context to that node (Enter / click row).
 pub fn draw(
     ui: &mut egui::Ui,
     rx: Option<&watch::Receiver<FleetSnapshot>>,
     resync: Option<&mpsc::UnboundedSender<()>>,
     active_name: &str,
     state: &mut FleetScreenState,
-) {
+) -> Option<String> {
     let Some(rx) = rx else {
         ui.vertical_centered(|ui| {
             ui.add_space(48.0);
@@ -44,10 +46,11 @@ pub fn draw(
                     .small(),
             );
         });
-        return;
+        return None;
     };
     let snap = rx.borrow().clone();
     let view = view_for(&snap, active_name, state.selected);
+    let mut switch_to: Option<String> = None;
 
     let n = view.rows.len();
     if !ui.ctx().memory(|m| m.focused().is_some()) {
@@ -56,6 +59,7 @@ pub fn draw(
         let mut page_up = false;
         let mut page_down = false;
         let mut repoll = false;
+        let mut enter = false;
         ui.input(|i| {
             if i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::K) {
                 up = true;
@@ -71,6 +75,9 @@ pub fn draw(
             }
             if i.key_pressed(egui::Key::R) {
                 repoll = true;
+            }
+            if i.key_pressed(egui::Key::Enter) {
+                enter = true;
             }
         });
         if up {
@@ -90,6 +97,12 @@ pub fn draw(
         {
             let _ = tx.send(());
         }
+        if enter
+            && let Some(row) = view.rows.get(state.selected)
+            && !row.active
+        {
+            switch_to = Some(row.name.clone());
+        }
     }
     if state.selected >= n.max(1) {
         state.selected = n.saturating_sub(1);
@@ -103,14 +116,30 @@ pub fn draw(
         {
             let _ = tx.send(());
         }
+        if let Some(row) = view.rows.get(state.selected)
+            && !row.active
+            && ui
+                .button(format!("Switch to {}", row.name))
+                .on_hover_text("Enter — point the cockpit at this node")
+                .clicked()
+        {
+            switch_to = Some(row.name.clone());
+        }
         ui.label(
-            egui::RichText::new("↑/↓ select  ·  PgUp/PgDn  ·  r re-poll")
+            egui::RichText::new("↑/↓ select  ·  PgUp/PgDn  ·  r re-poll  ·  Enter switch")
                 .weak()
                 .small(),
         );
     });
     ui.add_space(4.0);
-    draw_rows(ui, &view.rows, &mut state.selected);
+    let double_clicked_name = draw_rows(ui, &view.rows, &mut state.selected);
+    if let Some(name) = double_clicked_name
+        && let Some(row) = view.rows.iter().find(|r| r.name == name)
+        && !row.active
+    {
+        switch_to = Some(name);
+    }
+    switch_to
 }
 
 fn draw_header(ui: &mut egui::Ui, view: &FleetView) {
@@ -132,15 +161,25 @@ fn draw_header(ui: &mut egui::Ui, view: &FleetView) {
     });
 }
 
-fn draw_rows(ui: &mut egui::Ui, rows: &[FleetRowView], selected: &mut usize) {
+fn draw_rows(
+    ui: &mut egui::Ui,
+    rows: &[FleetRowView],
+    selected: &mut usize,
+) -> Option<String> {
+    let mut dbl = None;
     egui::ScrollArea::vertical().show(ui, |ui| {
         for (i, row) in rows.iter().enumerate() {
             let resp = draw_row(ui, row, i == *selected);
             if resp.clicked() {
                 *selected = i;
             }
+            if resp.double_clicked() {
+                *selected = i;
+                dbl = Some(row.name.clone());
+            }
         }
     });
+    dbl
 }
 
 fn draw_row(ui: &mut egui::Ui, row: &FleetRowView, selected: bool) -> egui::Response {

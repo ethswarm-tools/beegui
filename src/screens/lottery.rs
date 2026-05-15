@@ -1,14 +1,72 @@
-//! S4 Lottery / redistribution screen.
+//! S4 Lottery / redistribution screen. `r` triggers an rchash
+//! benchmark against the depth-derived sample (parity with
+//! bee-tui's S4).
 
+use std::sync::Arc;
+
+use bee_cockpit_core::api::ApiClient;
 use bee_cockpit_core::views::lottery::{
-    AnchorRow, Phase, PhaseSegment, PhaseState, RoundCard, StakeCard, StakeStatus, view_for,
+    AnchorRow, Phase, PhaseSegment, PhaseState, RoundCard, StakeCard, StakeStatus, bench_depth,
+    view_for,
 };
 use bee_cockpit_core::watch::BeeWatch;
+use tokio::runtime::Handle;
+use tokio::sync::mpsc;
 
-pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
+const BENCH_ANCHOR_LO: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const BENCH_ANCHOR_HI: &str = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+#[derive(Debug, Clone)]
+enum BenchState {
+    Idle,
+    Running,
+    Done { duration_seconds: f64, hash: String },
+    Failed { error: String },
+}
+
+pub struct LotteryScreenState {
+    bench: BenchState,
+    incoming:
+        mpsc::UnboundedReceiver<std::result::Result<bee::debug::RCHashResponse, String>>,
+    incoming_tx:
+        mpsc::UnboundedSender<std::result::Result<bee::debug::RCHashResponse, String>>,
+}
+
+impl Default for LotteryScreenState {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::unbounded_channel();
+        Self {
+            bench: BenchState::Idle,
+            incoming: rx,
+            incoming_tx: tx,
+        }
+    }
+}
+
+pub fn draw(
+    ui: &mut egui::Ui,
+    watch: &BeeWatch,
+    state: &mut LotteryScreenState,
+    api: Arc<ApiClient>,
+    rt: &Handle,
+) {
+    drain(state);
+
     let health = watch.health().borrow().clone();
     let lottery = watch.lottery().borrow().clone();
     let view = view_for(&health, &lottery);
+
+    if !ui.ctx().memory(|m| m.focused().is_some()) {
+        let mut start = false;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::R) {
+                start = true;
+            }
+        });
+        if start {
+            start_bench(state, &health, &api, rt);
+        }
+    }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         if let Some(round) = &view.round {
@@ -24,6 +82,8 @@ pub fn draw(ui: &mut egui::Ui, watch: &BeeWatch) {
         draw_anchors(ui, &view.anchors);
         ui.add_space(12.0);
         draw_stake(ui, &view.stake);
+        ui.add_space(8.0);
+        draw_bench(ui, state, &health, &api, rt);
     });
 }
 
@@ -119,6 +179,126 @@ fn draw_stake(ui: &mut egui::Ui, card: &StakeCard) {
             ui.label(egui::RichText::new(why).italics().weak().small());
         }
     });
+}
+
+fn draw_bench(
+    ui: &mut egui::Ui,
+    state: &mut LotteryScreenState,
+    health: &bee_cockpit_core::watch::HealthSnapshot,
+    api: &Arc<ApiClient>,
+    rt: &Handle,
+) {
+    let depth = bench_depth(health);
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("rchash benchmark").strong());
+            ui.label(
+                egui::RichText::new(format!("depth {depth}"))
+                    .monospace()
+                    .weak()
+                    .small(),
+            );
+            let running = matches!(state.bench, BenchState::Running);
+            let label = if running { "running…" } else { "Run (r)" };
+            let btn = ui.add_enabled(!running, egui::Button::new(label));
+            if btn.clicked() {
+                start_bench(state, health, api, rt);
+            }
+        });
+        match &state.bench {
+            BenchState::Idle => {
+                ui.label(
+                    egui::RichText::new(
+                        "Press r (or click Run) to time the redistribution sample lookup.",
+                    )
+                    .italics()
+                    .weak()
+                    .small(),
+                );
+            }
+            BenchState::Running => {
+                ui.label(
+                    egui::RichText::new("running… (seconds to minutes on a busy reserve)")
+                        .italics()
+                        .weak(),
+                );
+            }
+            BenchState::Done {
+                duration_seconds,
+                hash,
+            } => {
+                let safe = *duration_seconds < 95.0;
+                let color = if safe {
+                    egui::Color32::from_rgb(0x4a, 0xc0, 0x4a)
+                } else {
+                    egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)
+                };
+                let verdict = if safe { "OK" } else { "SLOW" };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{verdict}  ·  {:.2}s  ·  hash {}",
+                        duration_seconds,
+                        &hash[..16.min(hash.len())]
+                    ))
+                    .color(color)
+                    .monospace(),
+                );
+                if !safe {
+                    ui.label(
+                        egui::RichText::new(
+                            "lookup is too slow — the reveal phase may time out at 95s",
+                        )
+                        .italics()
+                        .small()
+                        .color(egui::Color32::from_rgb(0xd0, 0x4a, 0x4a)),
+                    );
+                }
+            }
+            BenchState::Failed { error } => {
+                ui.label(
+                    egui::RichText::new(format!("failed: {error}"))
+                        .color(egui::Color32::RED)
+                        .small(),
+                );
+            }
+        }
+    });
+}
+
+fn start_bench(
+    state: &mut LotteryScreenState,
+    health: &bee_cockpit_core::watch::HealthSnapshot,
+    api: &Arc<ApiClient>,
+    rt: &Handle,
+) {
+    if matches!(state.bench, BenchState::Running) {
+        return;
+    }
+    let depth = bench_depth(health);
+    state.bench = BenchState::Running;
+    let api = api.clone();
+    let tx = state.incoming_tx.clone();
+    rt.spawn(async move {
+        let res = api
+            .bee()
+            .debug()
+            .r_chash(depth, BENCH_ANCHOR_LO, BENCH_ANCHOR_HI)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = tx.send(res);
+    });
+}
+
+fn drain(state: &mut LotteryScreenState) {
+    while let Ok(result) = state.incoming.try_recv() {
+        state.bench = match result {
+            Ok(r) => BenchState::Done {
+                duration_seconds: r.duration_seconds,
+                hash: r.hash,
+            },
+            Err(e) => BenchState::Failed { error: e },
+        };
+    }
 }
 
 fn phase_color(p: Phase) -> egui::Color32 {

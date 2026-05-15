@@ -16,17 +16,9 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 enum DrillState {
     Idle,
-    Loading {
-        batch_id: BatchId,
-    },
-    Loaded {
-        batch_id: BatchId,
-        view: Box<StampDrillView>,
-    },
-    Failed {
-        batch_id: BatchId,
-        err: String,
-    },
+    Loading { batch_id: BatchId },
+    Loaded { view: Box<StampDrillView> },
+    Failed { batch_id: BatchId, err: String },
 }
 
 pub struct StampsScreenState {
@@ -363,7 +355,6 @@ fn drain(state: &mut StampsScreenState, watch: &BeeWatch) {
                     snap.batches.iter().find(|b| b.batch_id == batch_id);
                 let view = compute_drill_view(&buckets, batch);
                 DrillState::Loaded {
-                    batch_id,
                     view: Box::new(view),
                 }
             }

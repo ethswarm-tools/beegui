@@ -75,14 +75,6 @@ impl OnceStatus {
 }
 
 impl OnceResult {
-    pub fn ok(verb: &str, message: impl Into<String>) -> Self {
-        Self {
-            verb: verb.into(),
-            status: OnceStatus::Ok,
-            message: message.into(),
-            data: Value::Null,
-        }
-    }
     pub fn ok_with_data(verb: &str, message: impl Into<String>, data: Value) -> Self {
         Self {
             verb: verb.into(),

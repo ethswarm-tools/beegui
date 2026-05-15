@@ -131,7 +131,6 @@ pub struct Banner {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BannerLevel {
     Ok,
-    Warn,
     Err,
 }
 
@@ -139,7 +138,6 @@ impl BannerLevel {
     pub fn color(self) -> egui::Color32 {
         match self {
             Self::Ok => egui::Color32::from_rgb(0x4a, 0xc0, 0x4a),
-            Self::Warn => egui::Color32::from_rgb(0xe0, 0xb0, 0x30),
             Self::Err => egui::Color32::from_rgb(0xd0, 0x4a, 0x4a),
         }
     }
@@ -170,13 +168,8 @@ pub struct Palette {
     pub selected: usize,
     pub history: VecDeque<String>,
     banner: Option<Banner>,
-    out_tx: mpsc::UnboundedSender<PaletteOutcome>,
-    out_rx: mpsc::UnboundedReceiver<PaletteOutcome>,
-}
-
-enum PaletteOutcome {
-    Banner(Banner),
-    Action(PaletteAction),
+    out_tx: mpsc::UnboundedSender<Banner>,
+    out_rx: mpsc::UnboundedReceiver<Banner>,
 }
 
 impl Default for Palette {
@@ -461,7 +454,7 @@ impl Palette {
         let tx = self.out_tx.clone();
         rt.spawn(async move {
             let outcome = run_upload(api, path, is_dir, prefix).await;
-            let _ = tx.send(PaletteOutcome::Banner(outcome));
+            let _ = tx.send(outcome);
         });
         Vec::new()
     }
@@ -505,7 +498,7 @@ impl Palette {
                     when: Instant::now(),
                 },
             };
-            let _ = tx.send(PaletteOutcome::Banner(outcome));
+            let _ = tx.send(outcome);
         });
         Vec::new()
     }
@@ -537,7 +530,7 @@ impl Palette {
         let tx = self.out_tx.clone();
         rt.spawn(async move {
             let outcome = run_pss(api, topic, payload, prefix).await;
-            let _ = tx.send(PaletteOutcome::Banner(outcome));
+            let _ = tx.send(outcome);
         });
         Vec::new()
     }
@@ -561,7 +554,7 @@ impl Palette {
         let tx = self.out_tx.clone();
         rt.spawn(async move {
             let outcome = run_batch(api, &sub, &rest).await;
-            let _ = tx.send(PaletteOutcome::Banner(outcome));
+            let _ = tx.send(outcome);
         });
         Vec::new()
     }
@@ -577,16 +570,16 @@ impl Palette {
         let dir = PathBuf::from(format!("/tmp/beegui-diagnose-{}", chrono_id()));
         rt.spawn(async move {
             let outcome = match pprof_bundle::fetch_and_write(&base, auth, 10, dir).await {
-                Ok(bundle) => PaletteOutcome::Banner(Banner {
+                Ok(bundle) => Banner {
                     level: BannerLevel::Ok,
                     text: bundle.summary(),
                     when: Instant::now(),
-                }),
-                Err(e) => PaletteOutcome::Banner(Banner {
+                },
+                Err(e) => Banner {
                     level: BannerLevel::Err,
                     text: format!("diagnose: {e}"),
                     when: Instant::now(),
-                }),
+                },
             };
             let _ = tx.send(outcome);
         });
@@ -594,17 +587,14 @@ impl Palette {
         Vec::new()
     }
 
-    /// Drain async-completed outcomes (e.g. `:diagnose`) and merge
-    /// them into the banner / action stream. Called once per frame.
+    /// Drain async-completed banners (e.g. `:diagnose`) and apply
+    /// them. Returns an empty action list — async verbs can't queue
+    /// state-mutating actions for now; they only update the banner.
     pub fn pump(&mut self) -> Vec<PaletteAction> {
-        let mut out = Vec::new();
-        while let Ok(o) = self.out_rx.try_recv() {
-            match o {
-                PaletteOutcome::Banner(b) => self.banner = Some(b),
-                PaletteOutcome::Action(a) => out.push(a),
-            }
+        while let Ok(b) = self.out_rx.try_recv() {
+            self.banner = Some(b);
         }
-        out
+        Vec::new()
     }
 }
 

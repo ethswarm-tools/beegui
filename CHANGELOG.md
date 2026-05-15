@@ -11,6 +11,40 @@ format follows [Keep a Changelog]; the project adheres to
 
 TBD.
 
+## [0.8.0] - 2026-05-15
+
+The "switch active node" release. v0.7.1 left switching from
+Fleet on the backlog because tearing down the BeeWatch hub for a
+different endpoint was a bigger refactor; v0.8 ships it. Also:
+S4 Lottery gets bee-tui's `rchash` benchmark.
+
+### Added
+
+- **S15 Fleet — switch active node.** Pressing `Enter` (or
+  double-clicking a row, or hitting the *Switch to <name>*
+  button) on a non-active node tears down the current
+  `BeeWatch`, builds a fresh `ApiClient` for the target, and
+  spawns a new watch hub. The shared fleet poller keeps running
+  so the roll-up view doesn't blink. Alerts pipeline is recreated
+  on switch so the first frame on the new node doesn't fire
+  spurious "Unknown → X" transitions. Mirrors bee-tui's
+  `Enter → SwitchContext` flow.
+- **S4 Lottery — `rchash` benchmark.** Pressing `r` (or
+  clicking *Run*) times the redistribution-sample lookup at the
+  health-derived storage depth against the full anchor range,
+  same as bee-tui's S4. Verdict colors green under 95s and red
+  above (the reveal-phase deadline).
+
+### Internal
+
+- App keeps two independent `CancellationToken`s: `cancel` for
+  app shutdown and `watch_cancel` for the currently active
+  node, so switching tears down only the watch hub.
+- Dead-code cleanup: dropped the unused `BannerLevel::Warn`
+  variant, the `PaletteOutcome` wrapper enum (palette banners
+  now flow directly through the mpsc channel), and
+  `OnceResult::ok`.
+
 ## [0.7.1] - 2026-05-15
 
 Bug fix release. Audit after v0.7 surfaced four more interaction
