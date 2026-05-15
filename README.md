@@ -9,8 +9,6 @@ skip reasons, …) via the shared
 crate, rendered with [egui](https://github.com/emilk/egui) instead of
 ratatui.
 
-![beegui cold-start](docs/screenshots/cold-start.png)
-
 ## Why egui
 
 Same Rust, single static binary, no JavaScript / no Electron — matches
@@ -147,26 +145,12 @@ Full verb list:
 `buy-preview`, `buy-suggest`, `topup-preview`,
 `dilute-preview`, `extend-preview`, `plan-batch`.
 
-## Screens
+## Screenshots
 
-S2 Stamps — bucket-histogram drill on the selected batch:
-
-![S2 Stamps drill](docs/screenshots/s2-stamps.png)
-
-S6 Peers — bin strip + 6-endpoint drill on the selected peer:
-
-![S6 Peers drill](docs/screenshots/s6-peers.png)
-
-S15 Fleet — multi-node roll-up + switch active node with `Enter`:
-
-![S15 Fleet](docs/screenshots/s15-fleet.png)
-
-Command palette (`:` or `Ctrl+P`):
-
-![Command palette](docs/screenshots/palette.png)
-
-See [`docs/screenshots/`](docs/screenshots/) for the capture recipe
-+ the full asset inventory.
+Visual assets aren't committed yet. The capture recipe lives at
+[`docs/screenshots/`](docs/screenshots/) — Linux Wayland / X11,
+macOS, and Windows commands plus framing tips and the asset
+inventory the README will embed once captured.
 
 ## Building from source
 
